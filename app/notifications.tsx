@@ -17,7 +17,7 @@ type NotificationRow = {
   recipient_id: string;
   actor_id: string | null;
   job_id: string | null;
-  type: 'new_quote' | 'quote_accepted';
+  type: 'new_quote' | 'quote_accepted' | 'match_cancelled';
   title: string;
   body: string;
   read_at: string | null;
@@ -144,13 +144,13 @@ export default function NotificationsScreen() {
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>🔔</Text>
             <Text style={styles.emptyTitle}>暫時未有通知</Text>
-            <Text style={styles.emptyText}>收到新報價或報價被接受時，會顯示喺呢度。</Text>
+            <Text style={styles.emptyText}>收到新報價、報價被接受或配對被取消時，會顯示喺呢度。</Text>
           </View>
         ) : (
           notifications.map((notification) => {
             const unread = !notification.read_at;
             const canOpenChat = !!notification.job_id && notification.type === 'quote_accepted';
-            const icon = notification.type === 'new_quote' ? '💰' : '✅';
+            const icon = notification.type === 'new_quote' ? '💰' : notification.type === 'match_cancelled' ? '❌' : '✅';
 
             return (
               <Pressable
