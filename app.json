@@ -13,6 +13,14 @@
     "android": {
       "package": "com.diefish2.workerapp"
     },
-    "plugins": ["expo-router"]
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "WorkerApp 需要存取相片，讓你上載維修問題的圖片。"
+        }
+      ]
+    ]
   }
 }
