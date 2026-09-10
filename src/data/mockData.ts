@@ -11,6 +11,7 @@ export const categories = [
   { icon: '🧹', label: '清潔' },
   { icon: '🪚', label: '裝修' },
   { icon: '🔒', label: '鎖匠' },
+  { icon: '🧰', label: '其他' },
 ];
 
 export const jobs = [
