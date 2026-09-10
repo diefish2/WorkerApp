@@ -15,6 +15,7 @@ export default function RootLayout() {
   const pathname = usePathname();
   const [session, setSession] = useState<Session | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -43,6 +44,48 @@ export default function RootLayout() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!session?.user.id) {
+      setUnreadChatCount(0);
+      return;
+    }
+
+    let active = true;
+
+    async function loadUnreadChatCount() {
+      const { count, error } = await supabase
+        .from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('recipient_id', session!.user.id)
+        .eq('type', 'new_message')
+        .eq('is_read', false);
+
+      if (!active || error) return;
+      setUnreadChatCount(count ?? 0);
+    }
+
+    loadUnreadChatCount();
+
+    const channel = supabase
+      .channel(`workerapp-chat-badge-${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `recipient_id=eq.${session.user.id}`,
+        },
+        loadUnreadChatCount
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user.id, pathname]);
 
   if (checkingAuth) {
     return (
@@ -78,8 +121,15 @@ export default function RootLayout() {
             <Text style={styles.floatingText}>通知</Text>
           </Pressable>
           <Pressable style={styles.floatingButton} onPress={() => router.push('/chats')}>
-            <Text style={styles.floatingIcon}>💬</Text>
-            <Text style={styles.floatingText}>聊天</Text>
+            <View>
+              <Text style={styles.floatingIcon}>💬</Text>
+              {unreadChatCount > 0 ? (
+                <View style={styles.chatBadge}>
+                  <Text style={styles.chatBadgeText}>{unreadChatCount > 99 ? '99+' : unreadChatCount}</Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={[styles.floatingText, unreadChatCount > 0 && styles.floatingTextUnread]}>聊天</Text>
           </Pressable>
           <Pressable style={styles.floatingButton} onPress={() => router.push('/account')}>
             <Text style={styles.floatingIcon}>👤</Text>
@@ -122,4 +172,20 @@ const styles = StyleSheet.create({
   },
   floatingIcon: { fontSize: 15 },
   floatingText: { color: '#0B7A45', fontWeight: '900', fontSize: 13 },
+  floatingTextUnread: { color: '#D93025' },
+  chatBadge: {
+    position: 'absolute',
+    top: -9,
+    right: -13,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#D93025',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  chatBadgeText: { color: '#FFFFFF', fontSize: 9, fontWeight: '900' },
 });
