@@ -32,6 +32,9 @@ type JobPost = {
   photoUri: string | null;
   status: string;
   createdAt: string;
+  acceptedQuoteId: string | null;
+  acceptedWorkerName: string | null;
+  acceptedPrice: string | null;
 };
 
 type Quote = {
@@ -43,7 +46,7 @@ type Quote = {
   createdAt: string;
 };
 
-type JobFormData = Omit<JobPost, 'id' | 'status' | 'createdAt'>;
+type JobFormData = Omit<JobPost, 'id' | 'status' | 'createdAt' | 'acceptedQuoteId' | 'acceptedWorkerName' | 'acceptedPrice'>;
 
 type DatabaseJob = {
   id: string;
@@ -55,6 +58,9 @@ type DatabaseJob = {
   photo_url: string | null;
   status: string;
   created_at: string;
+  accepted_quote_id: string | null;
+  accepted_worker_name: string | null;
+  accepted_price: string | null;
 };
 
 type DatabaseQuote = {
@@ -77,6 +83,9 @@ function fromDatabaseJob(job: DatabaseJob): JobPost {
     photoUri: job.photo_url,
     status: job.status ?? '等待報價',
     createdAt: new Date(job.created_at).toLocaleString('zh-HK'),
+    acceptedQuoteId: job.accepted_quote_id ?? null,
+    acceptedWorkerName: job.accepted_worker_name ?? null,
+    acceptedPrice: job.accepted_price ?? null,
   };
 }
 
@@ -163,20 +172,12 @@ export default function HomeScreen() {
   }, []);
 
   async function loadJobs() {
-    const { data, error } = await supabase
-      .from('jobs')
-      .select('*')
-      .order('created_at', { ascending: false });
-
+    const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
     if (!error) setJobs((data as DatabaseJob[]).map(fromDatabaseJob));
   }
 
   async function loadQuotes() {
-    const { data, error } = await supabase
-      .from('quotes')
-      .select('*')
-      .order('created_at', { ascending: false });
-
+    const { data, error } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
     if (!error) setQuotes((data as DatabaseQuote[]).map(fromDatabaseQuote));
   }
 
@@ -187,11 +188,9 @@ export default function HomeScreen() {
 
   async function addJob(data: JobFormData) {
     let photoUrl: string | null = null;
-
     try {
       photoUrl = await resolvePhotoUrl(data.photoUri);
     } catch (error: any) {
-      console.error('Upload photo error:', error);
       Alert.alert('相片上載失敗', error?.message ?? '請再試一次。');
       return;
     }
@@ -219,11 +218,9 @@ export default function HomeScreen() {
     if (!editingJobId) return;
 
     let photoUrl: string | null = null;
-
     try {
       photoUrl = await resolvePhotoUrl(data.photoUri);
     } catch (error: any) {
-      console.error('Upload photo error:', error);
       Alert.alert('相片上載失敗', error?.message ?? '請再試一次。');
       return;
     }
@@ -252,28 +249,18 @@ export default function HomeScreen() {
   }
 
   function confirmDeleteJob(job: JobPost) {
-    Alert.alert(
-      '刪除需求？',
-      `確定唔再需要「${job.title}」？刪除後所有相關報價都會一齊刪除。`,
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '刪除',
-          style: 'destructive',
-          onPress: () => deleteJob(job.id),
-        },
-      ]
-    );
+    Alert.alert('刪除需求？', `確定唔再需要「${job.title}」？刪除後所有相關報價都會一齊刪除。`, [
+      { text: '取消', style: 'cancel' },
+      { text: '刪除', style: 'destructive', onPress: () => deleteJob(job.id) },
+    ]);
   }
 
   async function deleteJob(jobId: string) {
     const { error } = await supabase.from('jobs').delete().eq('id', jobId);
-
     if (error) {
       Alert.alert('刪除失敗', error.message);
       return;
     }
-
     if (editingJobId === jobId) setEditingJobId(null);
     await Promise.all([loadJobs(), loadQuotes()]);
     Alert.alert('已刪除', '呢個需求已經移除，師傅亦唔會再見到。');
@@ -282,6 +269,12 @@ export default function HomeScreen() {
   async function submitQuote(jobId: string, workerName: string, price: string, message: string) {
     if (!price.trim()) {
       Alert.alert('請輸入報價');
+      return false;
+    }
+
+    const job = jobs.find((item) => item.id === jobId);
+    if (job?.acceptedQuoteId) {
+      Alert.alert('工作已配對', '客戶已經接受另一個報價。');
       return false;
     }
 
@@ -299,6 +292,51 @@ export default function HomeScreen() {
 
     await loadQuotes();
     return true;
+  }
+
+  function confirmAcceptQuote(job: JobPost, quote: Quote) {
+    Alert.alert(
+      '接受呢個報價？',
+      `${quote.workerName}：HK$${quote.price}\n\n接受後，工作會標記為「已配對」。`,
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '接受報價', onPress: () => acceptQuote(job, quote) },
+      ]
+    );
+  }
+
+  async function acceptQuote(job: JobPost, quote: Quote) {
+    if (job.acceptedQuoteId) {
+      Alert.alert('已經配對', '呢個需求已經接受咗一個報價。');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('jobs')
+      .update({
+        accepted_quote_id: quote.id,
+        accepted_worker_name: quote.workerName,
+        accepted_price: quote.price,
+        status: '已配對',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', job.id)
+      .is('accepted_quote_id', null)
+      .select('id');
+
+    if (error) {
+      Alert.alert('接受失敗', error.message);
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      Alert.alert('已經配對', '呢個需求可能已經接受咗另一個報價。');
+      await loadJobs();
+      return;
+    }
+
+    await loadJobs();
+    Alert.alert('配對成功', `你已選擇 ${quote.workerName}，報價 HK$${quote.price}。`);
   }
 
   return (
@@ -346,6 +384,7 @@ export default function HomeScreen() {
                 onPostAnother={() => setCustomerScreen('post')}
                 onEdit={(jobId) => { setEditingJobId(jobId); setCustomerScreen('edit'); }}
                 onDelete={confirmDeleteJob}
+                onAcceptQuote={confirmAcceptQuote}
               />
             )}
             {mode === 'worker' && <WorkerHome jobs={jobs} onQuote={setQuoteJob} />}
@@ -451,7 +490,7 @@ function JobFormScreen({ heading, submitLabel, initialJob, onBack, onSubmit }: {
   );
 }
 
-function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete }: { jobs: JobPost[]; quotes: Quote[]; onBack: () => void; onPostAnother: () => void; onEdit: (jobId: string) => void; onDelete: (job: JobPost) => void }) {
+function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete, onAcceptQuote }: { jobs: JobPost[]; quotes: Quote[]; onBack: () => void; onPostAnother: () => void; onEdit: (jobId: string) => void; onDelete: (job: JobPost) => void; onAcceptQuote: (job: JobPost, quote: Quote) => void }) {
   return (
     <>
       <Pressable onPress={onBack}><Text style={styles.back}>‹ 主頁</Text></Pressable>
@@ -462,37 +501,73 @@ function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete }:
       {jobs.length === 0 ? (
         <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有需求</Text></View>
       ) : jobs.map((job) => (
-        <CustomerJobCard key={job.id} job={job} quotes={quotes.filter((quote) => quote.jobId === job.id)} onEdit={() => onEdit(job.id)} onDelete={() => onDelete(job)} />
+        <CustomerJobCard
+          key={job.id}
+          job={job}
+          quotes={quotes.filter((quote) => quote.jobId === job.id)}
+          onEdit={() => onEdit(job.id)}
+          onDelete={() => onDelete(job)}
+          onAcceptQuote={(quote) => onAcceptQuote(job, quote)}
+        />
       ))}
     </>
   );
 }
 
-function CustomerJobCard({ job, quotes, onEdit, onDelete }: { job: JobPost; quotes: Quote[]; onEdit: () => void; onDelete: () => void }) {
+function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote }: { job: JobPost; quotes: Quote[]; onEdit: () => void; onDelete: () => void; onAcceptQuote: (quote: Quote) => void }) {
+  const matched = !!job.acceptedQuoteId;
+
   return (
     <View style={styles.jobCard}>
       {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
       <View style={styles.rowBetween}>
-        <Text style={styles.statusPill}>{job.status}</Text>
+        <Text style={[styles.statusPill, matched && styles.matchedPill]}>{job.status}</Text>
         <Text style={styles.time}>{job.createdAt}</Text>
       </View>
       <Text style={styles.jobTitle}>{job.title}</Text>
       <Text style={styles.jobMeta}>📍 {job.district}</Text>
       {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
       <Text style={styles.jobBudget}>{job.budget ? `你嘅預算：HK$${job.budget}` : '等師傅報價'}</Text>
+
+      {matched && (
+        <View style={styles.matchedCard}>
+          <Text style={styles.matchedTitle}>✓ 已配對師傅</Text>
+          <View style={styles.rowBetween}>
+            <Text style={styles.matchedWorker}>{job.acceptedWorkerName}</Text>
+            <Text style={styles.matchedPrice}>HK${job.acceptedPrice}</Text>
+          </View>
+        </View>
+      )}
+
       <View style={styles.quoteHeader}>
         <Text style={styles.quoteSectionTitle}>收到嘅報價</Text>
         <Text style={styles.quoteCount}>{quotes.length}</Text>
       </View>
       {quotes.length === 0 ? (
         <Text style={styles.noQuotes}>暫時未有師傅報價。</Text>
-      ) : quotes.map((quote) => (
-        <View key={quote.id} style={styles.quoteCard}>
-          <View style={styles.rowBetween}><Text style={styles.workerName}>{quote.workerName}</Text><Text style={styles.quotePrice}>HK${quote.price}</Text></View>
-          {quote.message ? <Text style={styles.quoteMessage}>{quote.message}</Text> : null}
-          <Text style={styles.time}>{quote.createdAt}</Text>
-        </View>
-      ))}
+      ) : quotes.map((quote) => {
+        const selected = quote.id === job.acceptedQuoteId;
+        return (
+          <View key={quote.id} style={[styles.quoteCard, selected && styles.selectedQuoteCard]}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.workerName}>{quote.workerName}</Text>
+              <Text style={styles.quotePrice}>HK${quote.price}</Text>
+            </View>
+            {quote.message ? <Text style={styles.quoteMessage}>{quote.message}</Text> : null}
+            <Text style={styles.time}>{quote.createdAt}</Text>
+            {selected ? (
+              <Text style={styles.selectedLabel}>✓ 已接受呢個報價</Text>
+            ) : !matched ? (
+              <Pressable style={styles.acceptQuoteButton} onPress={() => onAcceptQuote(quote)}>
+                <Text style={styles.acceptQuoteText}>接受報價</Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.notSelectedLabel}>未獲選</Text>
+            )}
+          </View>
+        );
+      })}
+
       <View style={styles.jobActions}>
         <Pressable style={styles.editButton} onPress={onEdit}><Text style={styles.editButtonText}>✏️ 編輯</Text></Pressable>
         <Pressable style={styles.deleteButton} onPress={onDelete}><Text style={styles.deleteButtonText}>刪除需求</Text></Pressable>
@@ -507,21 +582,34 @@ function WorkerHome({ jobs, onQuote }: { jobs: JobPost[]; onQuote: (job: JobPost
       <View style={styles.workerHero}>
         <Text style={styles.online}>● Realtime 已連線</Text>
         <Text style={styles.heroTitle}>附近新工作</Text>
-        <Text style={styles.heroSubtitle}>客戶新上載嘅相片會同工作一齊顯示。</Text>
+        <Text style={styles.heroSubtitle}>客戶接受報價後，工作狀態會即時更新做「已配對」。</Text>
       </View>
       {jobs.length === 0 ? (
         <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有新工作</Text></View>
-      ) : jobs.map((job) => (
-        <View key={job.id} style={styles.jobCard}>
-          {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
-          <View style={styles.rowBetween}><Text style={styles.newPill}>新工作</Text><Text style={styles.time}>{job.createdAt}</Text></View>
-          <Text style={styles.jobTitle}>{job.title}</Text>
-          <Text style={styles.jobMeta}>📍 {job.district}</Text>
-          {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
-          <Text style={styles.jobBudget}>{job.budget ? `客人預算：HK$${job.budget}` : '客人等你報價'}</Text>
-          <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}><Text style={styles.primaryButtonText}>立即報價</Text></Pressable>
-        </View>
-      ))}
+      ) : jobs.map((job) => {
+        const matched = !!job.acceptedQuoteId;
+        return (
+          <View key={job.id} style={styles.jobCard}>
+            {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
+            <View style={styles.rowBetween}>
+              <Text style={[styles.newPill, matched && styles.matchedPill]}>{matched ? '已配對' : '新工作'}</Text>
+              <Text style={styles.time}>{job.createdAt}</Text>
+            </View>
+            <Text style={styles.jobTitle}>{job.title}</Text>
+            <Text style={styles.jobMeta}>📍 {job.district}</Text>
+            {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
+            <Text style={styles.jobBudget}>{job.budget ? `客人預算：HK$${job.budget}` : '客人等你報價'}</Text>
+            {matched ? (
+              <View style={styles.workerMatchedCard}>
+                <Text style={styles.matchedTitle}>呢個工作已經配對</Text>
+                <Text style={styles.jobDetails}>已接受：{job.acceptedWorkerName} · HK${job.acceptedPrice}</Text>
+              </View>
+            ) : (
+              <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}><Text style={styles.primaryButtonText}>立即報價</Text></Pressable>
+            )}
+          </View>
+        );
+      })}
     </>
   );
 }
@@ -627,6 +715,7 @@ const styles = StyleSheet.create({
   jobPhoto: { width: '100%', height: 185, borderRadius: 12, marginBottom: 14 },
   statusPill: { backgroundColor: '#FFF7D6', color: '#806A00', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
   newPill: { backgroundColor: '#EAF8F0', color: '#0B7A45', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
+  matchedPill: { backgroundColor: '#E5F4FF', color: '#176A9A' },
   time: { color: '#87968E', fontSize: 12 },
   jobTitle: { fontSize: 19, fontWeight: '800', color: '#1C3026', marginTop: 12 },
   jobMeta: { marginTop: 7, color: '#667A70' },
@@ -644,9 +733,19 @@ const styles = StyleSheet.create({
   quoteCount: { minWidth: 26, height: 26, borderRadius: 13, backgroundColor: '#0FA958', color: '#FFFFFF', textAlign: 'center', paddingTop: 3, fontWeight: '800', overflow: 'hidden' },
   noQuotes: { marginTop: 10, color: '#7A8B82' },
   quoteCard: { marginTop: 10, backgroundColor: '#F7FAF8', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E1E9E4' },
+  selectedQuoteCard: { borderColor: '#7AC79A', backgroundColor: '#F1FBF5' },
   workerName: { fontSize: 16, fontWeight: '800', color: '#22362C' },
   quotePrice: { fontSize: 18, fontWeight: '900', color: '#0B7A45' },
   quoteMessage: { marginTop: 8, marginBottom: 6, color: '#455A50', lineHeight: 20 },
+  acceptQuoteButton: { marginTop: 10, backgroundColor: '#0FA958', borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  acceptQuoteText: { color: '#FFFFFF', fontWeight: '800' },
+  selectedLabel: { marginTop: 10, color: '#0B7A45', fontWeight: '800' },
+  notSelectedLabel: { marginTop: 10, color: '#89968F', fontWeight: '700' },
+  matchedCard: { marginTop: 14, backgroundColor: '#EAF8F0', borderRadius: 12, padding: 13, borderWidth: 1, borderColor: '#B9DFC8' },
+  matchedTitle: { color: '#0B7A45', fontWeight: '900', marginBottom: 8 },
+  matchedWorker: { fontSize: 17, fontWeight: '900', color: '#22362C' },
+  matchedPrice: { fontSize: 18, fontWeight: '900', color: '#0B7A45' },
+  workerMatchedCard: { marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: '#F1F5F3' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: '#FFFFFF', padding: 20, paddingBottom: 34, borderTopLeftRadius: 22, borderTopRightRadius: 22 },
   modalTitle: { fontSize: 24, fontWeight: '900', color: '#17251E' },
