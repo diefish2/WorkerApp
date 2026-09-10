@@ -108,6 +108,7 @@ export default function ChatScreen() {
       }
 
       await loadMessages();
+      await markChatNotificationsRead(uid);
 
       channel = supabase
         .channel(`workerapp-chat-${jobId}`)
@@ -119,17 +120,31 @@ export default function ChatScreen() {
             table: 'messages',
             filter: `job_id=eq.${jobId}`,
           },
-          (payload) => {
+          async (payload) => {
             const incoming = payload.new as MessageRow;
             setMessages((current) => {
               if (current.some((message) => message.id === incoming.id)) return current;
               return [...current, incoming];
             });
+
+            if (incoming.sender_id !== uid) {
+              await markChatNotificationsRead(uid);
+            }
           }
         )
         .subscribe();
 
       setLoading(false);
+    }
+
+    async function markChatNotificationsRead(uid: string) {
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('recipient_id', uid)
+        .eq('job_id', jobId)
+        .eq('type', 'new_message')
+        .eq('is_read', false);
     }
 
     async function loadMessages() {
