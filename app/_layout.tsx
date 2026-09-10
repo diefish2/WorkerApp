@@ -65,6 +65,7 @@ export default function RootLayout() {
         <Stack.Protected guard={!!session}>
           <Stack.Screen name="index" />
           <Stack.Screen name="account" />
+          <Stack.Screen name="notifications" />
           <Stack.Screen name="chats" />
           <Stack.Screen name="chat" />
         </Stack.Protected>
@@ -72,6 +73,10 @@ export default function RootLayout() {
 
       {!!session && pathname === '/' ? (
         <View style={styles.homeActions}>
+          <Pressable style={styles.floatingButton} onPress={() => router.push('/notifications')}>
+            <Text style={styles.floatingIcon}>🔔</Text>
+            <Text style={styles.floatingText}>通知</Text>
+          </Pressable>
           <Pressable style={styles.floatingButton} onPress={() => router.push('/chats')}>
             <Text style={styles.floatingIcon}>💬</Text>
             <Text style={styles.floatingText}>聊天</Text>
