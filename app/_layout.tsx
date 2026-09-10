@@ -65,14 +65,22 @@ export default function RootLayout() {
         <Stack.Protected guard={!!session}>
           <Stack.Screen name="index" />
           <Stack.Screen name="account" />
+          <Stack.Screen name="chats" />
+          <Stack.Screen name="chat" />
         </Stack.Protected>
       </Stack>
 
       {!!session && pathname === '/' ? (
-        <Pressable style={styles.accountButton} onPress={() => router.push('/account')}>
-          <Text style={styles.accountIcon}>👤</Text>
-          <Text style={styles.accountButtonText}>帳戶</Text>
-        </Pressable>
+        <View style={styles.homeActions}>
+          <Pressable style={styles.floatingButton} onPress={() => router.push('/chats')}>
+            <Text style={styles.floatingIcon}>💬</Text>
+            <Text style={styles.floatingText}>聊天</Text>
+          </Pressable>
+          <Pressable style={styles.floatingButton} onPress={() => router.push('/account')}>
+            <Text style={styles.floatingIcon}>👤</Text>
+            <Text style={styles.floatingText}>帳戶</Text>
+          </Pressable>
+        </View>
       ) : null}
     </View>
   );
@@ -83,11 +91,15 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F7FAF8' },
   loadingBox: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText: { marginTop: 12, color: '#617168' },
-  accountButton: {
+  homeActions: {
     position: 'absolute',
     right: 18,
     bottom: 28,
     zIndex: 50,
+    gap: 9,
+    alignItems: 'flex-end',
+  },
+  floatingButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -103,6 +115,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 4,
   },
-  accountIcon: { fontSize: 15 },
-  accountButtonText: { color: '#0B7A45', fontWeight: '900', fontSize: 13 },
+  floatingIcon: { fontSize: 15 },
+  floatingText: { color: '#0B7A45', fontWeight: '900', fontSize: 13 },
 });
