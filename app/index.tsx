@@ -384,27 +384,28 @@ export default function HomeScreen() {
 
   async function cancelMatch(job: JobPost) {
     if (!job.acceptedQuoteId) return;
-    const { data, error } = await supabase
-      .from('jobs')
-      .update({
-        accepted_quote_id: null,
-        accepted_worker_name: null,
-        accepted_price: null,
-        status: '等待報價',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', job.id)
-      .eq('accepted_quote_id', job.acceptedQuoteId)
-      .select('id');
+
+    const { data, error } = await supabase.rpc('cancel_job_match', {
+      p_job_id: job.id,
+    });
+
     if (error) {
-      Alert.alert('取消失敗', error.message);
+      const notAllowed = /not allowed/i.test(error.message);
+      Alert.alert(
+        '取消失敗',
+        notAllowed ? '只有發佈呢個需求嘅 Customer 或已配對嘅師傅可以取消。' : error.message
+      );
       return;
     }
-    if (!data || data.length === 0) {
-      Alert.alert('狀態已更新', '呢個工作嘅配對狀態可能已經被更改。');
+
+    if (!data) {
+      Alert.alert('狀態已更新', '呢個工作目前已經唔係配對狀態。');
+      await loadJobs();
       return;
     }
+
     await loadJobs();
+    Alert.alert('已取消配對', '工作已重新變成「等待報價」。');
   }
 
   return (
