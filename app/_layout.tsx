@@ -8,51 +8,34 @@ import {
   View,
 } from 'react-native';
 import { Stack, router, usePathname } from 'expo-router';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../src/lib/supabase';
 
 export default function RootLayout() {
   const pathname = usePathname();
+  const [session, setSession] = useState<Session | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
     let mounted = true;
 
-    async function syncRoute() {
-      const { data } = await supabase.auth.getSession();
+    supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
-
-      const session = data.session;
-      setHasSession(!!session);
-
-      if (!session && pathname !== '/login') {
-        router.replace('/login');
-      } else if (session && pathname === '/login') {
-        router.replace('/');
-      }
-
+      setSession(data.session);
       setCheckingAuth(false);
-    }
+    });
 
-    syncRoute();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
-
-      setHasSession(!!session);
-
-      if (!session && pathname !== '/login') {
-        router.replace('/login');
-      } else if (session && pathname === '/login') {
-        router.replace('/');
-      }
+      setSession(nextSession);
+      setCheckingAuth(false);
     });
 
     return () => {
       mounted = false;
       authListener.subscription.unsubscribe();
     };
-  }, [pathname]);
+  }, []);
 
   if (checkingAuth) {
     return (
@@ -67,19 +50,18 @@ export default function RootLayout() {
 
   return (
     <View style={styles.root}>
-      <Stack
-        initialRouteName="login"
-        screenOptions={{
-          headerTitleAlign: 'center',
-          headerShown: false,
-        }}
-      >
-        <Stack.Screen name="login" />
-        <Stack.Screen name="index" />
-        <Stack.Screen name="account" />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Protected guard={!session}>
+          <Stack.Screen name="login" />
+        </Stack.Protected>
+
+        <Stack.Protected guard={!!session}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="account" />
+        </Stack.Protected>
       </Stack>
 
-      {hasSession && pathname === '/' ? (
+      {!!session && pathname === '/' ? (
         <Pressable style={styles.accountButton} onPress={() => router.push('/account')}>
           <Text style={styles.accountIcon}>👤</Text>
           <Text style={styles.accountButtonText}>帳戶</Text>
