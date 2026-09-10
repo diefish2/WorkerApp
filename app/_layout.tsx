@@ -57,7 +57,7 @@ export default function RootLayout() {
     const userId = session.user.id;
 
     async function loadUnreadCounts() {
-      const [chatResult, allResult] = await Promise.all([
+      const [chatResult, notificationResult] = await Promise.all([
         supabase
           .from('notifications')
           .select('id', { count: 'exact', head: true })
@@ -68,12 +68,13 @@ export default function RootLayout() {
           .from('notifications')
           .select('id', { count: 'exact', head: true })
           .eq('recipient_id', userId)
+          .neq('type', 'new_message')
           .is('read_at', null),
       ]);
 
       if (!active) return;
       if (!chatResult.error) setUnreadChatCount(chatResult.count ?? 0);
-      if (!allResult.error) setUnreadNotificationCount(allResult.count ?? 0);
+      if (!notificationResult.error) setUnreadNotificationCount(notificationResult.count ?? 0);
     }
 
     loadUnreadCounts();
