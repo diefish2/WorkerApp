@@ -12,32 +12,43 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
-import { categories, jobs, quotes } from '../src/data/mockData';
+import { categories, jobs as demoJobs } from '../src/data/mockData';
 
-// Main app screen.
-// Demo content such as service names, worker names and prices lives in:
-// src/data/mockData.ts
+type AppMode = 'customer' | 'worker';
+type CustomerScreen = 'home' | 'post' | 'myJobs';
+
+type JobPost = {
+  id: string;
+  title: string;
+  details: string;
+  budget: string;
+  district: string;
+  category: string;
+  photoUri: string | null;
+  status: '等待報價';
+  createdAt: string;
+};
 
 export default function HomeScreen() {
-  const [mode, setMode] = useState<'customer' | 'worker'>('customer');
-  const [screen, setScreen] = useState<'home' | 'post' | 'quotes'>('home');
-  const [title, setTitle] = useState('');
-  const [details, setDetails] = useState('');
-  const [budget, setBudget] = useState('');
+  const [mode, setMode] = useState<AppMode>('customer');
+  const [customerScreen, setCustomerScreen] = useState<CustomerScreen>('home');
+  const [myJobs, setMyJobs] = useState<JobPost[]>([]);
 
-  function switchMode(nextMode: 'customer' | 'worker') {
+  function switchMode(nextMode: AppMode) {
     setMode(nextMode);
-    setScreen('home');
+    setCustomerScreen('home');
   }
 
-  function postJob() {
-    if (!title.trim()) {
-      Alert.alert('請輸入需要', '例如：廚房水喉漏水');
-      return;
-    }
+  function addJob(job: Omit<JobPost, 'id' | 'status' | 'createdAt'>) {
+    const newJob: JobPost = {
+      ...job,
+      id: `job-${Date.now()}`,
+      status: '等待報價',
+      createdAt: '剛剛',
+    };
 
-    // Later this will save the job and its uploaded photo to a real database.
-    setScreen('quotes');
+    setMyJobs((current) => [newJob, ...current]);
+    setCustomerScreen('myJobs');
   }
 
   return (
@@ -65,32 +76,30 @@ export default function HomeScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {mode === 'customer' && screen === 'home' && (
-          <CustomerHome onPostJob={() => setScreen('post')} />
+        {mode === 'customer' && customerScreen === 'home' && (
+          <CustomerHome
+            myJobCount={myJobs.length}
+            onPostJob={() => setCustomerScreen('post')}
+            onMyJobs={() => setCustomerScreen('myJobs')}
+          />
         )}
 
-        {mode === 'customer' && screen === 'post' && (
+        {mode === 'customer' && customerScreen === 'post' && (
           <PostJobScreen
-            title={title}
-            details={details}
-            budget={budget}
-            onTitleChange={setTitle}
-            onDetailsChange={setDetails}
-            onBudgetChange={setBudget}
-            onBack={() => setScreen('home')}
-            onSubmit={postJob}
+            onBack={() => setCustomerScreen('home')}
+            onSubmit={addJob}
           />
         )}
 
-        {mode === 'customer' && screen === 'quotes' && (
-          <QuotesScreen
-            jobTitle={title || '廚房水喉漏水'}
-            budget={budget}
-            onBack={() => setScreen('home')}
+        {mode === 'customer' && customerScreen === 'myJobs' && (
+          <MyJobsScreen
+            jobs={myJobs}
+            onBack={() => setCustomerScreen('home')}
+            onPostAnother={() => setCustomerScreen('post')}
           />
         )}
 
-        {mode === 'worker' && <WorkerHome />}
+        {mode === 'worker' && <WorkerHome customerJobs={myJobs} />}
       </ScrollView>
     </SafeAreaView>
   );
@@ -115,7 +124,15 @@ function ModeButton({
   );
 }
 
-function CustomerHome({ onPostJob }: { onPostJob: () => void }) {
+function CustomerHome({
+  myJobCount,
+  onPostJob,
+  onMyJobs,
+}: {
+  myJobCount: number;
+  onPostJob: () => void;
+  onMyJobs: () => void;
+}) {
   return (
     <>
       <Text style={styles.location}>📍 香港</Text>
@@ -124,6 +141,13 @@ function CustomerHome({ onPostJob }: { onPostJob: () => void }) {
 
       <Pressable style={styles.primaryButton} onPress={onPostJob}>
         <Text style={styles.primaryButtonText}>＋ 發佈需求</Text>
+      </Pressable>
+
+      <Pressable style={styles.myJobsButton} onPress={onMyJobs}>
+        <Text style={styles.myJobsButtonText}>我的需求</Text>
+        <View style={styles.countBadge}>
+          <Text style={styles.countBadgeText}>{myJobCount}</Text>
+        </View>
       </Pressable>
 
       <Text style={styles.sectionTitle}>服務類別</Text>
@@ -135,60 +159,55 @@ function CustomerHome({ onPostJob }: { onPostJob: () => void }) {
           </Pressable>
         ))}
       </View>
-
-      <View style={styles.infoCard}>
-        <Text style={styles.infoTitle}>點樣運作？</Text>
-        <Text style={styles.infoText}>1. 講低問題＋上載相片</Text>
-        <Text style={styles.infoText}>2. 可以自訂預算，亦可以等師傅報價</Text>
-        <Text style={styles.infoText}>3. 比較價錢、評分同時間，再揀師傅</Text>
-      </View>
     </>
   );
 }
 
 function PostJobScreen({
-  title,
-  details,
-  budget,
-  onTitleChange,
-  onDetailsChange,
-  onBudgetChange,
   onBack,
   onSubmit,
 }: {
-  title: string;
-  details: string;
-  budget: string;
-  onTitleChange: (value: string) => void;
-  onDetailsChange: (value: string) => void;
-  onBudgetChange: (value: string) => void;
   onBack: () => void;
-  onSubmit: () => void;
+  onSubmit: (job: Omit<JobPost, 'id' | 'status' | 'createdAt'>) => void;
 }) {
-  // This stores the local file URI selected from the user's photo library.
-  // The next step will upload this file to cloud storage (Supabase Storage).
+  const [title, setTitle] = useState('');
+  const [details, setDetails] = useState('');
+  const [budget, setBudget] = useState('');
+  const [district, setDistrict] = useState('香港');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
 
   async function pickPhoto() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
-      Alert.alert(
-        '需要相簿權限',
-        '請允許 WorkerApp 存取相片，先可以上載維修問題圖片。'
-      );
+      Alert.alert('需要相簿權限', '請允許 WorkerApp 存取相片。');
       return;
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: false,
       quality: 0.8,
     });
 
     if (!result.canceled && result.assets.length > 0) {
       setPhotoUri(result.assets[0].uri);
     }
+  }
+
+  function submitJob() {
+    if (!title.trim()) {
+      Alert.alert('請輸入需要', '例如：廚房水喉漏水');
+      return;
+    }
+
+    onSubmit({
+      title: title.trim(),
+      details: details.trim(),
+      budget: budget.trim(),
+      district: district.trim() || '香港',
+      category: '一般維修',
+      photoUri,
+    });
   }
 
   return (
@@ -202,7 +221,7 @@ function PostJobScreen({
       <Text style={styles.label}>你需要咩幫手？</Text>
       <TextInput
         value={title}
-        onChangeText={onTitleChange}
+        onChangeText={setTitle}
         placeholder="例如：廚房水喉漏水"
         style={styles.input}
       />
@@ -210,14 +229,21 @@ function PostJobScreen({
       <Text style={styles.label}>詳細描述</Text>
       <TextInput
         value={details}
-        onChangeText={onDetailsChange}
+        onChangeText={setDetails}
         placeholder="講多少少情況，例如幾時開始漏水…"
         multiline
         style={[styles.input, styles.textArea]}
       />
 
-      <Text style={styles.label}>相片</Text>
+      <Text style={styles.label}>地區</Text>
+      <TextInput
+        value={district}
+        onChangeText={setDistrict}
+        placeholder="例如：沙田"
+        style={styles.input}
+      />
 
+      <Text style={styles.label}>相片</Text>
       {photoUri ? (
         <View style={styles.photoPreviewCard}>
           <Image source={{ uri: photoUri }} style={styles.photoPreview} />
@@ -229,7 +255,6 @@ function PostJobScreen({
               <Text style={styles.removeText}>移除</Text>
             </Pressable>
           </View>
-          <Text style={styles.photoStatus}>✓ 已選擇相片（目前只存在手機本機）</Text>
         </View>
       ) : (
         <Pressable style={styles.photoBox} onPress={pickPhoto}>
@@ -241,28 +266,28 @@ function PostJobScreen({
       <Text style={styles.label}>你心目中嘅價錢（可選）</Text>
       <TextInput
         value={budget}
-        onChangeText={onBudgetChange}
+        onChangeText={setBudget}
         placeholder="例如 600"
         keyboardType="numeric"
         style={styles.input}
       />
       <Text style={styles.currencyHint}>HKD</Text>
 
-      <Pressable style={styles.primaryButton} onPress={onSubmit}>
+      <Pressable style={styles.primaryButton} onPress={submitJob}>
         <Text style={styles.primaryButtonText}>發佈需求</Text>
       </Pressable>
     </>
   );
 }
 
-function QuotesScreen({
-  jobTitle,
-  budget,
+function MyJobsScreen({
+  jobs,
   onBack,
+  onPostAnother,
 }: {
-  jobTitle: string;
-  budget: string;
+  jobs: JobPost[];
   onBack: () => void;
+  onPostAnother: () => void;
 }) {
   return (
     <>
@@ -270,75 +295,90 @@ function QuotesScreen({
         <Text style={styles.back}>‹ 主頁</Text>
       </Pressable>
 
-      <Text style={styles.pageTitle}>收到嘅報價</Text>
-
-      <View style={styles.jobSummary}>
-        <Text style={styles.jobTitle}>{jobTitle}</Text>
-        <Text style={styles.jobMeta}>
-          📍 香港 · {budget ? `你嘅預算 HK$${budget}` : '等待報價'}
-        </Text>
+      <View style={styles.rowBetween}>
+        <Text style={styles.pageTitle}>我的需求</Text>
+        <Pressable onPress={onPostAnother}>
+          <Text style={styles.addAnother}>＋ 新需求</Text>
+        </Pressable>
       </View>
 
-      {quotes.map((quote) => (
-        <View key={quote.id} style={styles.quoteCard}>
-          <View style={styles.rowBetween}>
-            <View>
-              <Text style={styles.workerName}>{quote.name}</Text>
-              <Text style={styles.rating}>
-                ⭐ {quote.rating} · {quote.jobsCompleted} 單
-              </Text>
-            </View>
-            <Text style={styles.price}>{quote.price}</Text>
-          </View>
-
-          <Text style={styles.quoteNote}>{quote.note}</Text>
-
-          <View style={styles.quoteActions}>
-            <Pressable style={styles.secondaryButton}>
-              <Text style={styles.secondaryText}>傾一傾</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.acceptButton}
-              onPress={() => Alert.alert('已選擇師傅', `${quote.name} · ${quote.price}`)}
-            >
-              <Text style={styles.primaryButtonText}>揀佢</Text>
-            </Pressable>
-          </View>
+      {jobs.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>暫時未有需求</Text>
+          <Text style={styles.emptyText}>發佈第一個工作後，就會喺呢度見到。</Text>
         </View>
-      ))}
+      ) : (
+        jobs.map((job) => <CustomerJobCard key={job.id} job={job} />)
+      )}
     </>
   );
 }
 
-function WorkerHome() {
+function CustomerJobCard({ job }: { job: JobPost }) {
+  return (
+    <View style={styles.jobCard}>
+      {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
+
+      <View style={styles.rowBetween}>
+        <Text style={styles.statusPill}>{job.status}</Text>
+        <Text style={styles.time}>{job.createdAt}</Text>
+      </View>
+
+      <Text style={styles.jobTitle}>{job.title}</Text>
+      <Text style={styles.jobMeta}>📍 {job.district}</Text>
+
+      {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
+
+      <Text style={styles.jobBudget}>
+        {job.budget ? `你嘅預算：HK$${job.budget}` : '未設定預算 · 等師傅報價'}
+      </Text>
+    </View>
+  );
+}
+
+function WorkerHome({ customerJobs }: { customerJobs: JobPost[] }) {
   return (
     <>
       <View style={styles.workerHero}>
         <Text style={styles.online}>● 在線接單</Text>
         <Text style={styles.heroTitle}>附近新工作</Text>
-        <Text style={styles.heroSubtitle}>睇需求，再由你決定報幾多錢。</Text>
+        <Text style={styles.heroSubtitle}>客戶新發佈嘅需求會即時出現喺最上面。</Text>
       </View>
 
-      {jobs.map((job) => (
+      {customerJobs.map((job) => (
+        <View key={job.id} style={styles.jobCard}>
+          {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
+
+          <View style={styles.rowBetween}>
+            <Text style={styles.newPill}>新工作</Text>
+            <Text style={styles.time}>{job.createdAt}</Text>
+          </View>
+
+          <Text style={styles.jobTitle}>{job.title}</Text>
+          <Text style={styles.jobMeta}>📍 {job.district}</Text>
+          {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
+          <Text style={styles.jobBudget}>
+            {job.budget ? `客人預算 HK$${job.budget}` : '客人等你報價'}
+          </Text>
+
+          <Pressable
+            style={styles.primaryButtonSmall}
+            onPress={() => Alert.alert('下一步：報價功能', `你正在查看：${job.title}`)}
+          >
+            <Text style={styles.primaryButtonText}>立即報價</Text>
+          </Pressable>
+        </View>
+      ))}
+
+      {demoJobs.map((job) => (
         <View key={job.id} style={styles.jobCard}>
           <View style={styles.rowBetween}>
             <Text style={styles.categoryPill}>{job.category}</Text>
             <Text style={styles.time}>{job.time}</Text>
           </View>
-
           <Text style={styles.jobTitle}>{job.title}</Text>
           <Text style={styles.jobMeta}>📍 {job.district}</Text>
           <Text style={styles.jobBudget}>{job.budget}</Text>
-
-          <Pressable
-            style={styles.primaryButtonSmall}
-            onPress={() =>
-              Alert.alert('提交報價', `${job.title}\n你可以輸入價錢及可上門時間。`)
-            }
-          >
-            <Text style={styles.primaryButtonText}>立即報價</Text>
-          </Pressable>
         </View>
       ))}
     </>
@@ -360,163 +400,58 @@ const styles = StyleSheet.create({
   },
   logo: { fontSize: 24, fontWeight: '800', color: '#0B7A45' },
   tagline: { fontSize: 12, color: '#688076', marginTop: 2 },
-  modeSwitch: {
-    flexDirection: 'row',
-    backgroundColor: '#EEF4F0',
-    padding: 3,
-    borderRadius: 12,
-  },
+  modeSwitch: { flexDirection: 'row', backgroundColor: '#EEF4F0', padding: 3, borderRadius: 12 },
   modeButton: { paddingVertical: 7, paddingHorizontal: 12, borderRadius: 9 },
   modeButtonActive: { backgroundColor: '#0FA958' },
   modeText: { color: '#587066', fontWeight: '700' },
   modeTextActive: { color: '#FFFFFF' },
-  content: { padding: 20, paddingBottom: 40 },
+  content: { padding: 20, paddingBottom: 50 },
   location: { color: '#60776D', fontWeight: '600', marginBottom: 16 },
   heroTitle: { fontSize: 30, lineHeight: 36, fontWeight: '800', color: '#17251E' },
-  heroSubtitle: {
-    fontSize: 16,
-    lineHeight: 23,
-    color: '#617168',
-    marginTop: 8,
-    marginBottom: 18,
-  },
-  primaryButton: {
-    backgroundColor: '#0FA958',
-    borderRadius: 14,
-    paddingVertical: 15,
-    alignItems: 'center',
-    marginVertical: 10,
-  },
-  primaryButtonSmall: {
-    backgroundColor: '#0FA958',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 14,
-  },
+  heroSubtitle: { fontSize: 16, lineHeight: 23, color: '#617168', marginTop: 8, marginBottom: 18 },
+  primaryButton: { backgroundColor: '#0FA958', borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginVertical: 10 },
+  primaryButtonSmall: { backgroundColor: '#0FA958', borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 14 },
   primaryButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
-  sectionTitle: {
-    marginTop: 26,
-    marginBottom: 14,
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#17251E',
-  },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  categoryCard: {
-    width: '22.5%',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E6ECE8',
-  },
+  myJobsButton: { marginTop: 8, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE8E1', borderRadius: 14, padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  myJobsButtonText: { fontSize: 16, color: '#294338', fontWeight: '800' },
+  countBadge: { minWidth: 26, height: 26, borderRadius: 13, backgroundColor: '#E8F8EF', alignItems: 'center', justifyContent: 'center' },
+  countBadgeText: { color: '#0B8D4A', fontWeight: '800' },
+  sectionTitle: { marginTop: 26, marginBottom: 14, fontSize: 20, fontWeight: '800', color: '#17251E' },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10 },
+  categoryCard: { width: '22.5%', backgroundColor: '#FFFFFF', paddingVertical: 14, borderRadius: 14, alignItems: 'center', borderWidth: 1, borderColor: '#E6ECE8' },
   categoryIcon: { fontSize: 24, marginBottom: 6 },
   categoryLabel: { fontSize: 13, fontWeight: '700', color: '#314139' },
-  infoCard: { marginTop: 24, padding: 18, backgroundColor: '#EAF8F0', borderRadius: 16 },
-  infoTitle: { fontSize: 18, fontWeight: '800', color: '#145F3D', marginBottom: 10 },
-  infoText: { fontSize: 14, lineHeight: 24, color: '#3B5C4C' },
   back: { color: '#0B8D4A', fontSize: 16, fontWeight: '700', marginBottom: 12 },
   pageTitle: { fontSize: 28, fontWeight: '800', color: '#17251E', marginBottom: 22 },
+  addAnother: { color: '#0B8D4A', fontWeight: '800', marginBottom: 22 },
   label: { fontSize: 15, fontWeight: '700', color: '#32443B', marginBottom: 8, marginTop: 12 },
-  input: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#DCE5DF',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    fontSize: 16,
-  },
+  input: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE5DF', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: 16 },
   textArea: { minHeight: 110, textAlignVertical: 'top' },
-  photoBox: {
-    height: 120,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: '#9DB5A8',
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  photoBox: { height: 105, borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#9DB5A8', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   photoPlus: { fontSize: 28, color: '#0FA958' },
   photoText: { color: '#597066', marginTop: 4, fontWeight: '600' },
-  photoPreviewCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#DCE5DF',
-  },
-  photoPreview: { width: '100%', height: 220, borderRadius: 10 },
+  photoPreviewCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 10, borderWidth: 1, borderColor: '#E1E9E4' },
+  photoPreview: { width: '100%', height: 220, borderRadius: 10, resizeMode: 'cover' },
   photoActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
-  photoStatus: { marginTop: 10, color: '#0B7A45', fontSize: 13, fontWeight: '600' },
-  removeButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    backgroundColor: '#FDECEC',
-  },
-  removeText: { color: '#B42318', fontWeight: '800' },
-  currencyHint: { color: '#778980', marginTop: 6, marginBottom: 4 },
-  jobSummary: { backgroundColor: '#EAF8F0', padding: 16, borderRadius: 14, marginBottom: 16 },
-  quoteCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E4EBE7',
-  },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  workerName: { fontSize: 18, fontWeight: '800', color: '#1E3027' },
-  rating: { marginTop: 5, color: '#667A70' },
-  price: { fontSize: 20, fontWeight: '900', color: '#0B7A45' },
-  quoteNote: { marginTop: 14, color: '#4F6259', lineHeight: 21 },
-  quoteActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  secondaryButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    backgroundColor: '#EDF3EF',
-  },
+  secondaryButton: { flex: 1, paddingVertical: 11, borderRadius: 10, alignItems: 'center', backgroundColor: '#EDF3EF' },
   secondaryText: { color: '#315243', fontWeight: '800' },
-  acceptButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    backgroundColor: '#0FA958',
-  },
+  removeButton: { paddingHorizontal: 18, paddingVertical: 11, borderRadius: 10, backgroundColor: '#FFF0F0' },
+  removeText: { color: '#B43A3A', fontWeight: '800' },
+  currencyHint: { color: '#778980', marginTop: 6, marginBottom: 4 },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  emptyCard: { backgroundColor: '#FFFFFF', padding: 24, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E4EBE7' },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#24382E' },
+  emptyText: { marginTop: 8, color: '#6A7D73', textAlign: 'center' },
   workerHero: { padding: 18, borderRadius: 18, backgroundColor: '#EAF8F0', marginBottom: 18 },
   online: { color: '#0B8D4A', fontWeight: '800', marginBottom: 10 },
-  jobCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E4EBE7',
-  },
-  categoryPill: {
-    backgroundColor: '#EAF8F0',
-    color: '#0B7A45',
-    fontWeight: '800',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-    overflow: 'hidden',
-  },
+  jobCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: '#E4EBE7' },
+  jobPhoto: { width: '100%', height: 180, borderRadius: 12, marginBottom: 14, resizeMode: 'cover' },
+  statusPill: { backgroundColor: '#FFF5D9', color: '#946D00', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
+  newPill: { backgroundColor: '#E7F8EE', color: '#0B8D4A', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
+  categoryPill: { backgroundColor: '#EAF8F0', color: '#0B7A45', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
   time: { color: '#87968E', fontSize: 12 },
   jobTitle: { fontSize: 19, fontWeight: '800', color: '#1C3026', marginTop: 12 },
   jobMeta: { marginTop: 7, color: '#667A70' },
-  jobBudget: { marginTop: 12, fontSize: 18, fontWeight: '900', color: '#17251E' },
+  jobDetails: { marginTop: 10, color: '#4D6258', lineHeight: 21 },
+  jobBudget: { marginTop: 12, fontSize: 17, fontWeight: '900', color: '#17251E' },
 });
