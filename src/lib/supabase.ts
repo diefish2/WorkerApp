@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 
 // Public frontend connection settings.
@@ -7,8 +8,9 @@ const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_vyW9CJha_XIO1jkZF9Wnyw_USJJnv58
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
-    persistSession: false,
-    autoRefreshToken: false,
+    storage: AsyncStorage,
+    persistSession: true,
+    autoRefreshToken: true,
     detectSessionInUrl: false,
   },
 });
