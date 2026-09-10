@@ -19,11 +19,18 @@ export default function RootLayout() {
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession().then(({ data }) => {
+    async function initializeAuth() {
+      if (__DEV__) {
+        await supabase.auth.signOut({ scope: 'local' });
+      }
+
+      const { data } = await supabase.auth.getSession();
       if (!mounted) return;
       setSession(data.session);
       setCheckingAuth(false);
-    });
+    }
+
+    initializeAuth();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
