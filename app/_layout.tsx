@@ -81,6 +81,7 @@ export default function RootLayout() {
 
       {hasSession && pathname === '/' ? (
         <Pressable style={styles.accountButton} onPress={() => router.push('/account')}>
+          <Text style={styles.accountIcon}>👤</Text>
           <Text style={styles.accountButtonText}>帳戶</Text>
         </Pressable>
       ) : null}
@@ -95,15 +96,24 @@ const styles = StyleSheet.create({
   loadingText: { marginTop: 12, color: '#617168' },
   accountButton: {
     position: 'absolute',
-    top: 54,
     right: 18,
+    bottom: 28,
     zIndex: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#DCE8E1',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
   },
+  accountIcon: { fontSize: 15 },
   accountButtonText: { color: '#0B7A45', fontWeight: '900', fontSize: 13 },
 });
