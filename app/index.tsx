@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -120,21 +120,21 @@ export default function HomeScreen() {
   }, []);
 
   async function loadJobs() {
-    const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
-    if (error) {
-      console.error('Load jobs error:', error);
-      return;
-    }
-    setJobs((data as DatabaseJob[]).map(fromDatabaseJob));
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error) setJobs((data as DatabaseJob[]).map(fromDatabaseJob));
   }
 
   async function loadQuotes() {
-    const { data, error } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
-    if (error) {
-      console.error('Load quotes error:', error);
-      return;
-    }
-    setQuotes((data as DatabaseQuote[]).map(fromDatabaseQuote));
+    const { data, error } = await supabase
+      .from('quotes')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error) setQuotes((data as DatabaseQuote[]).map(fromDatabaseQuote));
   }
 
   function switchMode(nextMode: AppMode) {
@@ -185,6 +185,34 @@ export default function HomeScreen() {
     setEditingJobId(null);
     await loadJobs();
     setCustomerScreen('myJobs');
+  }
+
+  function confirmDeleteJob(job: JobPost) {
+    Alert.alert(
+      '刪除需求？',
+      `確定唔再需要「${job.title}」？刪除後所有相關報價都會一齊刪除。`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '刪除',
+          style: 'destructive',
+          onPress: () => deleteJob(job.id),
+        },
+      ]
+    );
+  }
+
+  async function deleteJob(jobId: string) {
+    const { error } = await supabase.from('jobs').delete().eq('id', jobId);
+
+    if (error) {
+      Alert.alert('刪除失敗', error.message);
+      return;
+    }
+
+    if (editingJobId === jobId) setEditingJobId(null);
+    await Promise.all([loadJobs(), loadQuotes()]);
+    Alert.alert('已刪除', '呢個需求已經移除，師傅亦唔會再見到。');
   }
 
   async function submitQuote(jobId: string, workerName: string, price: string, message: string) {
@@ -240,7 +268,12 @@ export default function HomeScreen() {
             )}
 
             {mode === 'customer' && customerScreen === 'post' && (
-              <JobFormScreen heading="發佈需求" submitLabel="發佈需求" onBack={() => setCustomerScreen('home')} onSubmit={addJob} />
+              <JobFormScreen
+                heading="發佈需求"
+                submitLabel="發佈需求"
+                onBack={() => setCustomerScreen('home')}
+                onSubmit={addJob}
+              />
             )}
 
             {mode === 'customer' && customerScreen === 'edit' && editingJob && (
@@ -266,6 +299,7 @@ export default function HomeScreen() {
                   setEditingJobId(jobId);
                   setCustomerScreen('edit');
                 }}
+                onDelete={confirmDeleteJob}
               />
             )}
 
@@ -383,7 +417,7 @@ function JobFormScreen({ heading, submitLabel, initialJob, onBack, onSubmit }: {
   );
 }
 
-function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit }: { jobs: JobPost[]; quotes: Quote[]; onBack: () => void; onPostAnother: () => void; onEdit: (jobId: string) => void }) {
+function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete }: { jobs: JobPost[]; quotes: Quote[]; onBack: () => void; onPostAnother: () => void; onEdit: (jobId: string) => void; onDelete: (job: JobPost) => void }) {
   return (
     <>
       <Pressable onPress={onBack}><Text style={styles.back}>‹ 主頁</Text></Pressable>
@@ -394,13 +428,19 @@ function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit }: { jobs: J
       {jobs.length === 0 ? (
         <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有需求</Text></View>
       ) : jobs.map((job) => (
-        <CustomerJobCard key={job.id} job={job} quotes={quotes.filter((quote) => quote.jobId === job.id)} onEdit={() => onEdit(job.id)} />
+        <CustomerJobCard
+          key={job.id}
+          job={job}
+          quotes={quotes.filter((quote) => quote.jobId === job.id)}
+          onEdit={() => onEdit(job.id)}
+          onDelete={() => onDelete(job)}
+        />
       ))}
     </>
   );
 }
 
-function CustomerJobCard({ job, quotes, onEdit }: { job: JobPost; quotes: Quote[]; onEdit: () => void }) {
+function CustomerJobCard({ job, quotes, onEdit, onDelete }: { job: JobPost; quotes: Quote[]; onEdit: () => void; onDelete: () => void }) {
   return (
     <View style={styles.jobCard}>
       {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
@@ -431,7 +471,14 @@ function CustomerJobCard({ job, quotes, onEdit }: { job: JobPost; quotes: Quote[
         </View>
       ))}
 
-      <Pressable style={styles.editButton} onPress={onEdit}><Text style={styles.editButtonText}>✏️ 編輯需求</Text></Pressable>
+      <View style={styles.jobActions}>
+        <Pressable style={styles.editButton} onPress={onEdit}>
+          <Text style={styles.editButtonText}>✏️ 編輯</Text>
+        </Pressable>
+        <Pressable style={styles.deleteButton} onPress={onDelete}>
+          <Text style={styles.deleteButtonText}>刪除需求</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -442,7 +489,7 @@ function WorkerHome({ jobs, onQuote }: { jobs: JobPost[]; onQuote: (job: JobPost
       <View style={styles.workerHero}>
         <Text style={styles.online}>● Realtime 已連線</Text>
         <Text style={styles.heroTitle}>附近新工作</Text>
-        <Text style={styles.heroSubtitle}>揀一個工作，輸入價錢後真正送報價俾客戶。</Text>
+        <Text style={styles.heroSubtitle}>客戶刪除需求後，工作會即時由呢度消失。</Text>
       </View>
       {jobs.length === 0 ? (
         <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有新工作</Text></View>
@@ -568,8 +615,11 @@ const styles = StyleSheet.create({
   jobMeta: { marginTop: 7, color: '#667A70' },
   jobDetails: { marginTop: 10, color: '#455A50', lineHeight: 21 },
   jobBudget: { marginTop: 12, fontSize: 17, fontWeight: '900', color: '#17251E' },
-  editButton: { marginTop: 14, borderWidth: 1, borderColor: '#B9D8C6', backgroundColor: '#F3FBF6', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  jobActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  editButton: { flex: 1, borderWidth: 1, borderColor: '#B9D8C6', backgroundColor: '#F3FBF6', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   editButtonText: { color: '#0B7A45', fontWeight: '800', fontSize: 15 },
+  deleteButton: { flex: 1, borderWidth: 1, borderColor: '#F1B8B8', backgroundColor: '#FFF5F5', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  deleteButtonText: { color: '#B33A3A', fontWeight: '800', fontSize: 15 },
   workerHero: { padding: 18, borderRadius: 18, backgroundColor: '#EAF8F0', marginBottom: 18 },
   online: { color: '#0B8D4A', fontWeight: '800', marginBottom: 10 },
   quoteHeader: { marginTop: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
