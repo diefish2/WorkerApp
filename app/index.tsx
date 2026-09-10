@@ -339,6 +339,58 @@ export default function HomeScreen() {
     Alert.alert('配對成功', `你已選擇 ${quote.workerName}，報價 HK$${quote.price}。`);
   }
 
+  function confirmCancelMatch(job: JobPost) {
+    if (!job.acceptedQuoteId) return;
+
+    Alert.alert(
+      '取消已配對工作？',
+      `你確定要取消「${job.title}」嘅配對嗎？\n\n確認後，客戶會重新見到工作為「等待報價」，其他師傅亦可以再次報價。`,
+      [
+        { text: '保留配對', style: 'cancel' },
+        {
+          text: '確認取消',
+          style: 'destructive',
+          onPress: () => cancelMatch(job),
+        },
+      ]
+    );
+  }
+
+  async function cancelMatch(job: JobPost) {
+    if (!job.acceptedQuoteId) {
+      Alert.alert('已取消', '呢個工作目前已經唔係配對狀態。');
+      await loadJobs();
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('jobs')
+      .update({
+        accepted_quote_id: null,
+        accepted_worker_name: null,
+        accepted_price: null,
+        status: '等待報價',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', job.id)
+      .eq('accepted_quote_id', job.acceptedQuoteId)
+      .select('id');
+
+    if (error) {
+      Alert.alert('取消失敗', error.message);
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      Alert.alert('狀態已更新', '呢個工作嘅配對狀態可能已經被更改。');
+      await loadJobs();
+      return;
+    }
+
+    await loadJobs();
+    Alert.alert('已取消配對', '工作已重新變成「等待報價」。客戶畫面亦會即時更新。');
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -387,7 +439,7 @@ export default function HomeScreen() {
                 onAcceptQuote={confirmAcceptQuote}
               />
             )}
-            {mode === 'worker' && <WorkerHome jobs={jobs} onQuote={setQuoteJob} />}
+            {mode === 'worker' && <WorkerHome jobs={jobs} onQuote={setQuoteJob} onCancelMatch={confirmCancelMatch} />}
           </>
         )}
       </ScrollView>
@@ -576,13 +628,13 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote }: { job
   );
 }
 
-function WorkerHome({ jobs, onQuote }: { jobs: JobPost[]; onQuote: (job: JobPost) => void }) {
+function WorkerHome({ jobs, onQuote, onCancelMatch }: { jobs: JobPost[]; onQuote: (job: JobPost) => void; onCancelMatch: (job: JobPost) => void }) {
   return (
     <>
       <View style={styles.workerHero}>
         <Text style={styles.online}>● Realtime 已連線</Text>
         <Text style={styles.heroTitle}>附近新工作</Text>
-        <Text style={styles.heroSubtitle}>客戶接受報價後，工作狀態會即時更新做「已配對」。</Text>
+        <Text style={styles.heroSubtitle}>客戶接受報價後會顯示「已配對」；如師傅不能接單，可以先確認再取消配對。</Text>
       </View>
       {jobs.length === 0 ? (
         <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有新工作</Text></View>
@@ -600,10 +652,15 @@ function WorkerHome({ jobs, onQuote }: { jobs: JobPost[]; onQuote: (job: JobPost
             {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
             <Text style={styles.jobBudget}>{job.budget ? `客人預算：HK$${job.budget}` : '客人等你報價'}</Text>
             {matched ? (
-              <View style={styles.workerMatchedCard}>
-                <Text style={styles.matchedTitle}>呢個工作已經配對</Text>
-                <Text style={styles.jobDetails}>已接受：{job.acceptedWorkerName} · HK${job.acceptedPrice}</Text>
-              </View>
+              <>
+                <View style={styles.workerMatchedCard}>
+                  <Text style={styles.matchedTitle}>呢個工作已經配對</Text>
+                  <Text style={styles.jobDetails}>已接受：{job.acceptedWorkerName} · HK${job.acceptedPrice}</Text>
+                </View>
+                <Pressable style={styles.cancelMatchButton} onPress={() => onCancelMatch(job)}>
+                  <Text style={styles.cancelMatchText}>取消已配對</Text>
+                </Pressable>
+              </>
             ) : (
               <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}><Text style={styles.primaryButtonText}>立即報價</Text></Pressable>
             )}
@@ -746,6 +803,8 @@ const styles = StyleSheet.create({
   matchedWorker: { fontSize: 17, fontWeight: '900', color: '#22362C' },
   matchedPrice: { fontSize: 18, fontWeight: '900', color: '#0B7A45' },
   workerMatchedCard: { marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: '#F1F5F3' },
+  cancelMatchButton: { marginTop: 10, borderWidth: 1, borderColor: '#E7A6A6', backgroundColor: '#FFF5F5', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  cancelMatchText: { color: '#B33A3A', fontWeight: '800', fontSize: 15 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: '#FFFFFF', padding: 20, paddingBottom: 34, borderTopLeftRadius: 22, borderTopRightRadius: 22 },
   modalTitle: { fontSize: 24, fontWeight: '900', color: '#17251E' },
