@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "WorkerApp",
+    "slug": "workerapp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "workerapp",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.diefish2.workerapp"
+    },
+    "android": {
+      "package": "com.diefish2.workerapp"
+    },
+    "plugins": ["expo-router"]
+  }
+}
