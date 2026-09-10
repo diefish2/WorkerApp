@@ -24,6 +24,7 @@ type CustomerScreen = 'home' | 'post' | 'myJobs' | 'edit';
 
 type JobPost = {
   id: string;
+  customerId: string | null;
   title: string;
   details: string;
   budget: string;
@@ -46,10 +47,11 @@ type Quote = {
   createdAt: string;
 };
 
-type JobFormData = Omit<JobPost, 'id' | 'status' | 'createdAt' | 'acceptedQuoteId' | 'acceptedWorkerName' | 'acceptedPrice'>;
+type JobFormData = Omit<JobPost, 'id' | 'customerId' | 'status' | 'createdAt' | 'acceptedQuoteId' | 'acceptedWorkerName' | 'acceptedPrice'>;
 
 type DatabaseJob = {
   id: string;
+  customer_id: string | null;
   title: string;
   details: string;
   budget: string;
@@ -75,6 +77,7 @@ type DatabaseQuote = {
 function fromDatabaseJob(job: DatabaseJob): JobPost {
   return {
     id: job.id,
+    customerId: job.customer_id ?? null,
     title: job.title,
     details: job.details ?? '',
     budget: job.budget ?? '',
@@ -146,14 +149,26 @@ export default function HomeScreen() {
   const [customerScreen, setCustomerScreen] = useState<CustomerScreen>('home');
   const [jobs, setJobs] = useState<JobPost[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [quoteJob, setQuoteJob] = useState<JobPost | null>(null);
 
-  const editingJob = jobs.find((job) => job.id === editingJobId) ?? null;
+  const myJobs = currentUserId ? jobs.filter((job) => job.customerId === currentUserId) : [];
+  const editingJob = myJobs.find((job) => job.id === editingJobId) ?? null;
 
   useEffect(() => {
-    Promise.all([loadJobs(), loadQuotes()]).finally(() => setLoading(false));
+    let mounted = true;
+
+    async function initialise() {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+      setCurrentUserId(data.session?.user.id ?? null);
+      await Promise.all([loadJobs(), loadQuotes()]);
+      if (mounted) setLoading(false);
+    }
+
+    initialise();
 
     const jobsChannel = supabase
       .channel('workerapp-jobs')
@@ -166,6 +181,7 @@ export default function HomeScreen() {
       .subscribe();
 
     return () => {
+      mounted = false;
       supabase.removeChannel(jobsChannel);
       supabase.removeChannel(quotesChannel);
     };
@@ -187,6 +203,11 @@ export default function HomeScreen() {
   }
 
   async function addJob(data: JobFormData) {
+    if (!currentUserId) {
+      Alert.alert('登入已失效', '請重新登入後再發佈需求。');
+      return;
+    }
+
     let photoUrl: string | null = null;
     try {
       photoUrl = await resolvePhotoUrl(data.photoUri);
@@ -196,6 +217,7 @@ export default function HomeScreen() {
     }
 
     const { error } = await supabase.from('jobs').insert({
+      customer_id: currentUserId,
       title: data.title,
       details: data.details,
       budget: data.budget,
@@ -215,7 +237,7 @@ export default function HomeScreen() {
   }
 
   async function updateJob(data: JobFormData) {
-    if (!editingJobId) return;
+    if (!editingJobId || !currentUserId) return;
 
     let photoUrl: string | null = null;
     try {
@@ -225,7 +247,7 @@ export default function HomeScreen() {
       return;
     }
 
-    const { error } = await supabase
+    const { data: updatedRows, error } = await supabase
       .from('jobs')
       .update({
         title: data.title,
@@ -236,10 +258,19 @@ export default function HomeScreen() {
         photo_url: photoUrl,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', editingJobId);
+      .eq('id', editingJobId)
+      .eq('customer_id', currentUserId)
+      .select('id');
 
     if (error) {
       Alert.alert('更新失敗', error.message);
+      return;
+    }
+
+    if (!updatedRows || updatedRows.length === 0) {
+      Alert.alert('無法更新', '你只可以編輯自己發佈嘅需求。');
+      await loadJobs();
+      setCustomerScreen('myJobs');
       return;
     }
 
@@ -256,11 +287,26 @@ export default function HomeScreen() {
   }
 
   async function deleteJob(jobId: string) {
-    const { error } = await supabase.from('jobs').delete().eq('id', jobId);
+    if (!currentUserId) return;
+
+    const { data: deletedRows, error } = await supabase
+      .from('jobs')
+      .delete()
+      .eq('id', jobId)
+      .eq('customer_id', currentUserId)
+      .select('id');
+
     if (error) {
       Alert.alert('刪除失敗', error.message);
       return;
     }
+
+    if (!deletedRows || deletedRows.length === 0) {
+      Alert.alert('無法刪除', '你只可以刪除自己發佈嘅需求。');
+      await loadJobs();
+      return;
+    }
+
     if (editingJobId === jobId) setEditingJobId(null);
     await Promise.all([loadJobs(), loadQuotes()]);
     Alert.alert('已刪除', '呢個需求已經移除，師傅亦唔會再見到。');
@@ -414,7 +460,7 @@ export default function HomeScreen() {
         ) : (
           <>
             {mode === 'customer' && customerScreen === 'home' && (
-              <CustomerHome myJobCount={jobs.length} onPostJob={() => setCustomerScreen('post')} onMyJobs={() => setCustomerScreen('myJobs')} />
+              <CustomerHome myJobCount={myJobs.length} onPostJob={() => setCustomerScreen('post')} onMyJobs={() => setCustomerScreen('myJobs')} />
             )}
             {mode === 'customer' && customerScreen === 'post' && (
               <JobFormScreen heading="發佈需求" submitLabel="發佈需求" onBack={() => setCustomerScreen('home')} onSubmit={addJob} />
@@ -430,7 +476,7 @@ export default function HomeScreen() {
             )}
             {mode === 'customer' && customerScreen === 'myJobs' && (
               <MyJobsScreen
-                jobs={jobs}
+                jobs={myJobs}
                 quotes={quotes}
                 onBack={() => setCustomerScreen('home')}
                 onPostAnother={() => setCustomerScreen('post')}
