@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Alert,
+  Image,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -10,11 +11,12 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as ImagePicker from 'expo-image-picker';
 import { categories, jobs, quotes } from '../src/data/mockData';
 
-// This file controls the main app screen.
-// If you only want to change demo content such as service names,
-// districts, worker names, or prices, edit: src/data/mockData.ts
+// Main app screen.
+// Demo content such as service names, worker names and prices lives in:
+// src/data/mockData.ts
 
 export default function HomeScreen() {
   const [mode, setMode] = useState<'customer' | 'worker'>('customer');
@@ -34,8 +36,7 @@ export default function HomeScreen() {
       return;
     }
 
-    // Prototype behaviour: after posting, show sample worker quotes.
-    // Later this will save the job to a real database.
+    // Later this will save the job and its uploaded photo to a real database.
     setScreen('quotes');
   }
 
@@ -164,6 +165,32 @@ function PostJobScreen({
   onBack: () => void;
   onSubmit: () => void;
 }) {
+  // This stores the local file URI selected from the user's photo library.
+  // The next step will upload this file to cloud storage (Supabase Storage).
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+
+  async function pickPhoto() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        '需要相簿權限',
+        '請允許 WorkerApp 存取相片，先可以上載維修問題圖片。'
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets.length > 0) {
+      setPhotoUri(result.assets[0].uri);
+    }
+  }
+
   return (
     <>
       <Pressable onPress={onBack}>
@@ -190,13 +217,26 @@ function PostJobScreen({
       />
 
       <Text style={styles.label}>相片</Text>
-      <Pressable
-        style={styles.photoBox}
-        onPress={() => Alert.alert('Prototype', '下一版會接手機相簿及相機。')}
-      >
-        <Text style={styles.photoPlus}>＋</Text>
-        <Text style={styles.photoText}>上載相片</Text>
-      </Pressable>
+
+      {photoUri ? (
+        <View style={styles.photoPreviewCard}>
+          <Image source={{ uri: photoUri }} style={styles.photoPreview} />
+          <View style={styles.photoActions}>
+            <Pressable style={styles.secondaryButton} onPress={pickPhoto}>
+              <Text style={styles.secondaryText}>更換相片</Text>
+            </Pressable>
+            <Pressable style={styles.removeButton} onPress={() => setPhotoUri(null)}>
+              <Text style={styles.removeText}>移除</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.photoStatus}>✓ 已選擇相片（目前只存在手機本機）</Text>
+        </View>
+      ) : (
+        <Pressable style={styles.photoBox} onPress={pickPhoto}>
+          <Text style={styles.photoPlus}>＋</Text>
+          <Text style={styles.photoText}>從相簿選擇相片</Text>
+        </Pressable>
+      )}
 
       <Text style={styles.label}>你心目中嘅價錢（可選）</Text>
       <TextInput
@@ -305,7 +345,6 @@ function WorkerHome() {
   );
 }
 
-// Colour and layout settings are grouped here so they are easy to tweak.
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F7FAF8' },
   header: {
@@ -397,7 +436,7 @@ const styles = StyleSheet.create({
   },
   textArea: { minHeight: 110, textAlignVertical: 'top' },
   photoBox: {
-    height: 105,
+    height: 120,
     borderRadius: 14,
     borderWidth: 1.5,
     borderStyle: 'dashed',
@@ -408,6 +447,24 @@ const styles = StyleSheet.create({
   },
   photoPlus: { fontSize: 28, color: '#0FA958' },
   photoText: { color: '#597066', marginTop: 4, fontWeight: '600' },
+  photoPreviewCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#DCE5DF',
+  },
+  photoPreview: { width: '100%', height: 220, borderRadius: 10 },
+  photoActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  photoStatus: { marginTop: 10, color: '#0B7A45', fontSize: 13, fontWeight: '600' },
+  removeButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#FDECEC',
+  },
+  removeText: { color: '#B42318', fontWeight: '800' },
   currencyHint: { color: '#778980', marginTop: 6, marginBottom: 4 },
   jobSummary: { backgroundColor: '#EAF8F0', padding: 16, borderRadius: 14, marginBottom: 16 },
   quoteCard: {
