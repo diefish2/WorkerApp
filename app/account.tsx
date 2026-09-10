@@ -28,14 +28,13 @@ export default function AccountScreen() {
   async function signOut() {
     setSigningOut(true);
     const { error } = await supabase.auth.signOut({ scope: 'local' });
-    setSigningOut(false);
 
     if (error) {
+      setSigningOut(false);
       Alert.alert('登出失敗', error.message);
-      return;
     }
-
-    router.replace('/login');
+    // No manual router.replace here. Stack.Protected reacts to the
+    // session becoming null and safely returns to the login screen.
   }
 
   function confirmSignOut() {
