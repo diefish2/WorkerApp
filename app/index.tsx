@@ -17,6 +17,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { categories } from '../src/data/mockData';
 import { supabase } from '../src/lib/supabase';
 
+const JOB_PHOTOS_BUCKET = 'job-photos';
+
 type AppMode = 'customer' | 'worker';
 type CustomerScreen = 'home' | 'post' | 'myJobs' | 'edit';
 
@@ -89,6 +91,47 @@ function fromDatabaseQuote(quote: DatabaseQuote): Quote {
   };
 }
 
+function isRemotePhoto(uri: string) {
+  return /^https?:\/\//i.test(uri);
+}
+
+function photoFileInfo(uri: string) {
+  const cleanUri = uri.split('?')[0].toLowerCase();
+  if (cleanUri.endsWith('.png')) return { ext: 'png', contentType: 'image/png' };
+  if (cleanUri.endsWith('.webp')) return { ext: 'webp', contentType: 'image/webp' };
+  if (cleanUri.endsWith('.heic')) return { ext: 'heic', contentType: 'image/heic' };
+  if (cleanUri.endsWith('.heif')) return { ext: 'heif', contentType: 'image/heif' };
+  return { ext: 'jpg', contentType: 'image/jpeg' };
+}
+
+async function uploadJobPhoto(uri: string) {
+  const { ext, contentType } = photoFileInfo(uri);
+  const arrayBuffer = await fetch(uri).then((response) => response.arrayBuffer());
+  const filePath = `jobs/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+
+  const { data, error } = await supabase.storage
+    .from(JOB_PHOTOS_BUCKET)
+    .upload(filePath, arrayBuffer, {
+      contentType,
+      cacheControl: '3600',
+      upsert: false,
+    });
+
+  if (error) throw error;
+
+  const { data: publicUrlData } = supabase.storage
+    .from(JOB_PHOTOS_BUCKET)
+    .getPublicUrl(data.path);
+
+  return publicUrlData.publicUrl;
+}
+
+async function resolvePhotoUrl(uri: string | null) {
+  if (!uri) return null;
+  if (isRemotePhoto(uri)) return uri;
+  return uploadJobPhoto(uri);
+}
+
 export default function HomeScreen() {
   const [mode, setMode] = useState<AppMode>('customer');
   const [customerScreen, setCustomerScreen] = useState<CustomerScreen>('home');
@@ -143,13 +186,23 @@ export default function HomeScreen() {
   }
 
   async function addJob(data: JobFormData) {
+    let photoUrl: string | null = null;
+
+    try {
+      photoUrl = await resolvePhotoUrl(data.photoUri);
+    } catch (error: any) {
+      console.error('Upload photo error:', error);
+      Alert.alert('相片上載失敗', error?.message ?? '請再試一次。');
+      return;
+    }
+
     const { error } = await supabase.from('jobs').insert({
       title: data.title,
       details: data.details,
       budget: data.budget,
       district: data.district,
       category: data.category,
-      photo_url: null,
+      photo_url: photoUrl,
       status: '等待報價',
     });
 
@@ -165,6 +218,16 @@ export default function HomeScreen() {
   async function updateJob(data: JobFormData) {
     if (!editingJobId) return;
 
+    let photoUrl: string | null = null;
+
+    try {
+      photoUrl = await resolvePhotoUrl(data.photoUri);
+    } catch (error: any) {
+      console.error('Upload photo error:', error);
+      Alert.alert('相片上載失敗', error?.message ?? '請再試一次。');
+      return;
+    }
+
     const { error } = await supabase
       .from('jobs')
       .update({
@@ -173,6 +236,7 @@ export default function HomeScreen() {
         budget: data.budget,
         district: data.district,
         category: data.category,
+        photo_url: photoUrl,
         updated_at: new Date().toISOString(),
       })
       .eq('id', editingJobId);
@@ -260,60 +324,36 @@ export default function HomeScreen() {
         ) : (
           <>
             {mode === 'customer' && customerScreen === 'home' && (
-              <CustomerHome
-                myJobCount={jobs.length}
-                onPostJob={() => setCustomerScreen('post')}
-                onMyJobs={() => setCustomerScreen('myJobs')}
-              />
+              <CustomerHome myJobCount={jobs.length} onPostJob={() => setCustomerScreen('post')} onMyJobs={() => setCustomerScreen('myJobs')} />
             )}
-
             {mode === 'customer' && customerScreen === 'post' && (
-              <JobFormScreen
-                heading="發佈需求"
-                submitLabel="發佈需求"
-                onBack={() => setCustomerScreen('home')}
-                onSubmit={addJob}
-              />
+              <JobFormScreen heading="發佈需求" submitLabel="發佈需求" onBack={() => setCustomerScreen('home')} onSubmit={addJob} />
             )}
-
             {mode === 'customer' && customerScreen === 'edit' && editingJob && (
               <JobFormScreen
                 heading="編輯需求"
                 submitLabel="儲存更改"
                 initialJob={editingJob}
-                onBack={() => {
-                  setEditingJobId(null);
-                  setCustomerScreen('myJobs');
-                }}
+                onBack={() => { setEditingJobId(null); setCustomerScreen('myJobs'); }}
                 onSubmit={updateJob}
               />
             )}
-
             {mode === 'customer' && customerScreen === 'myJobs' && (
               <MyJobsScreen
                 jobs={jobs}
                 quotes={quotes}
                 onBack={() => setCustomerScreen('home')}
                 onPostAnother={() => setCustomerScreen('post')}
-                onEdit={(jobId) => {
-                  setEditingJobId(jobId);
-                  setCustomerScreen('edit');
-                }}
+                onEdit={(jobId) => { setEditingJobId(jobId); setCustomerScreen('edit'); }}
                 onDelete={confirmDeleteJob}
               />
             )}
-
             {mode === 'worker' && <WorkerHome jobs={jobs} onQuote={setQuoteJob} />}
           </>
         )}
       </ScrollView>
 
-      <QuoteModal
-        job={quoteJob}
-        visible={!!quoteJob}
-        onClose={() => setQuoteJob(null)}
-        onSubmit={submitQuote}
-      />
+      <QuoteModal job={quoteJob} visible={!!quoteJob} onClose={() => setQuoteJob(null)} onSubmit={submitQuote} />
     </SafeAreaView>
   );
 }
@@ -374,14 +414,7 @@ function JobFormScreen({ heading, submitLabel, initialJob, onBack, onSubmit }: {
       return;
     }
     setSubmitting(true);
-    await onSubmit({
-      title: title.trim(),
-      details: details.trim(),
-      budget: budget.trim(),
-      district: district.trim() || '香港',
-      category: initialJob?.category ?? '一般維修',
-      photoUri,
-    });
+    await onSubmit({ title: title.trim(), details: details.trim(), budget: budget.trim(), district: district.trim() || '香港', category: initialJob?.category ?? '一般維修', photoUri });
     setSubmitting(false);
   }
 
@@ -403,6 +436,7 @@ function JobFormScreen({ heading, submitLabel, initialJob, onBack, onSubmit }: {
             <Pressable style={styles.secondaryButton} onPress={pickPhoto}><Text style={styles.secondaryText}>更換相片</Text></Pressable>
             <Pressable style={styles.removeButton} onPress={() => setPhotoUri(null)}><Text style={styles.removeText}>移除</Text></Pressable>
           </View>
+          <Text style={styles.photoNote}>發佈時會上載到 WorkerApp，師傅亦可以睇到呢張相。</Text>
         </View>
       ) : (
         <Pressable style={styles.photoBox} onPress={pickPhoto}><Text style={styles.photoPlus}>＋</Text><Text style={styles.photoText}>從相簿選擇相片</Text></Pressable>
@@ -411,7 +445,7 @@ function JobFormScreen({ heading, submitLabel, initialJob, onBack, onSubmit }: {
       <TextInput value={budget} onChangeText={setBudget} placeholder="例如 600" keyboardType="numeric" style={styles.input} />
       <Text style={styles.currencyHint}>HKD</Text>
       <Pressable style={[styles.primaryButton, submitting && styles.disabledButton]} onPress={submit} disabled={submitting}>
-        <Text style={styles.primaryButtonText}>{submitting ? '處理中...' : submitLabel}</Text>
+        <Text style={styles.primaryButtonText}>{submitting ? '上載及處理中...' : submitLabel}</Text>
       </Pressable>
     </>
   );
@@ -428,13 +462,7 @@ function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete }:
       {jobs.length === 0 ? (
         <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有需求</Text></View>
       ) : jobs.map((job) => (
-        <CustomerJobCard
-          key={job.id}
-          job={job}
-          quotes={quotes.filter((quote) => quote.jobId === job.id)}
-          onEdit={() => onEdit(job.id)}
-          onDelete={() => onDelete(job)}
-        />
+        <CustomerJobCard key={job.id} job={job} quotes={quotes.filter((quote) => quote.jobId === job.id)} onEdit={() => onEdit(job.id)} onDelete={() => onDelete(job)} />
       ))}
     </>
   );
@@ -452,32 +480,22 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete }: { job: JobPost; quot
       <Text style={styles.jobMeta}>📍 {job.district}</Text>
       {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
       <Text style={styles.jobBudget}>{job.budget ? `你嘅預算：HK$${job.budget}` : '等師傅報價'}</Text>
-
       <View style={styles.quoteHeader}>
         <Text style={styles.quoteSectionTitle}>收到嘅報價</Text>
         <Text style={styles.quoteCount}>{quotes.length}</Text>
       </View>
-
       {quotes.length === 0 ? (
         <Text style={styles.noQuotes}>暫時未有師傅報價。</Text>
       ) : quotes.map((quote) => (
         <View key={quote.id} style={styles.quoteCard}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.workerName}>{quote.workerName}</Text>
-            <Text style={styles.quotePrice}>HK${quote.price}</Text>
-          </View>
+          <View style={styles.rowBetween}><Text style={styles.workerName}>{quote.workerName}</Text><Text style={styles.quotePrice}>HK${quote.price}</Text></View>
           {quote.message ? <Text style={styles.quoteMessage}>{quote.message}</Text> : null}
           <Text style={styles.time}>{quote.createdAt}</Text>
         </View>
       ))}
-
       <View style={styles.jobActions}>
-        <Pressable style={styles.editButton} onPress={onEdit}>
-          <Text style={styles.editButtonText}>✏️ 編輯</Text>
-        </Pressable>
-        <Pressable style={styles.deleteButton} onPress={onDelete}>
-          <Text style={styles.deleteButtonText}>刪除需求</Text>
-        </Pressable>
+        <Pressable style={styles.editButton} onPress={onEdit}><Text style={styles.editButtonText}>✏️ 編輯</Text></Pressable>
+        <Pressable style={styles.deleteButton} onPress={onDelete}><Text style={styles.deleteButtonText}>刪除需求</Text></Pressable>
       </View>
     </View>
   );
@@ -489,12 +507,13 @@ function WorkerHome({ jobs, onQuote }: { jobs: JobPost[]; onQuote: (job: JobPost
       <View style={styles.workerHero}>
         <Text style={styles.online}>● Realtime 已連線</Text>
         <Text style={styles.heroTitle}>附近新工作</Text>
-        <Text style={styles.heroSubtitle}>客戶刪除需求後，工作會即時由呢度消失。</Text>
+        <Text style={styles.heroSubtitle}>客戶新上載嘅相片會同工作一齊顯示。</Text>
       </View>
       {jobs.length === 0 ? (
         <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有新工作</Text></View>
       ) : jobs.map((job) => (
         <View key={job.id} style={styles.jobCard}>
+          {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
           <View style={styles.rowBetween}><Text style={styles.newPill}>新工作</Text><Text style={styles.time}>{job.createdAt}</Text></View>
           <Text style={styles.jobTitle}>{job.title}</Text>
           <Text style={styles.jobMeta}>📍 {job.district}</Text>
@@ -514,10 +533,7 @@ function QuoteModal({ job, visible, onClose, onSubmit }: { job: JobPost | null; 
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (visible) {
-      setPrice('');
-      setMessage('');
-    }
+    if (visible) { setPrice(''); setMessage(''); }
   }, [visible, job?.id]);
 
   async function submit() {
@@ -597,6 +613,7 @@ const styles = StyleSheet.create({
   photoPreviewCard: { backgroundColor: '#FFFFFF', padding: 10, borderRadius: 14, borderWidth: 1, borderColor: '#E1E9E4' },
   photoPreview: { width: '100%', height: 210, borderRadius: 10 },
   photoActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  photoNote: { marginTop: 8, fontSize: 12, color: '#72847A' },
   secondaryButton: { flex: 1, paddingVertical: 11, borderRadius: 10, alignItems: 'center', backgroundColor: '#EDF3EF' },
   secondaryText: { color: '#315243', fontWeight: '800' },
   removeButton: { paddingHorizontal: 18, paddingVertical: 11, borderRadius: 10, backgroundColor: '#FFF0F0' },
