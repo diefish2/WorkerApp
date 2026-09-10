@@ -17,7 +17,7 @@ type NotificationRow = {
   recipient_id: string;
   actor_id: string | null;
   job_id: string | null;
-  type: 'new_quote' | 'quote_accepted' | 'new_message';
+  type: 'new_quote' | 'quote_accepted';
   title: string;
   body: string;
   read_at: string | null;
@@ -63,6 +63,7 @@ export default function NotificationsScreen() {
       const { data } = await supabase
         .from('notifications')
         .select('id,recipient_id,actor_id,job_id,type,title,body,read_at,created_at')
+        .neq('type', 'new_message')
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -90,7 +91,7 @@ export default function NotificationsScreen() {
       );
     }
 
-    if (notification.job_id && (notification.type === 'quote_accepted' || notification.type === 'new_message')) {
+    if (notification.job_id && notification.type === 'quote_accepted') {
       router.push({ pathname: '/chat', params: { jobId: notification.job_id } });
     }
   }
@@ -143,13 +144,13 @@ export default function NotificationsScreen() {
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>🔔</Text>
             <Text style={styles.emptyTitle}>暫時未有通知</Text>
-            <Text style={styles.emptyText}>收到新報價、報價被接受或新聊天訊息時，會顯示喺呢度。</Text>
+            <Text style={styles.emptyText}>收到新報價或報價被接受時，會顯示喺呢度。</Text>
           </View>
         ) : (
           notifications.map((notification) => {
             const unread = !notification.read_at;
-            const canOpenChat = !!notification.job_id && (notification.type === 'quote_accepted' || notification.type === 'new_message');
-            const icon = notification.type === 'new_quote' ? '💰' : notification.type === 'quote_accepted' ? '✅' : '💬';
+            const canOpenChat = !!notification.job_id && notification.type === 'quote_accepted';
+            const icon = notification.type === 'new_quote' ? '💰' : '✅';
 
             return (
               <Pressable
