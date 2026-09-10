@@ -344,7 +344,7 @@ export default function HomeScreen() {
 
     Alert.alert(
       '取消已配對工作？',
-      `你確定要取消「${job.title}」嘅配對嗎？\n\n確認後，客戶會重新見到工作為「等待報價」，其他師傅亦可以再次報價。`,
+      `你確定要取消「${job.title}」嘅配對嗎？\n\n確認後，工作會重新變成「等待報價」，其他師傅亦可以再次報價。`,
       [
         { text: '保留配對', style: 'cancel' },
         {
@@ -388,7 +388,7 @@ export default function HomeScreen() {
     }
 
     await loadJobs();
-    Alert.alert('已取消配對', '工作已重新變成「等待報價」。客戶畫面亦會即時更新。');
+    Alert.alert('已取消配對', '工作已重新變成「等待報價」。雙方畫面亦會即時更新。');
   }
 
   return (
@@ -437,6 +437,7 @@ export default function HomeScreen() {
                 onEdit={(jobId) => { setEditingJobId(jobId); setCustomerScreen('edit'); }}
                 onDelete={confirmDeleteJob}
                 onAcceptQuote={confirmAcceptQuote}
+                onCancelMatch={confirmCancelMatch}
               />
             )}
             {mode === 'worker' && <WorkerHome jobs={jobs} onQuote={setQuoteJob} onCancelMatch={confirmCancelMatch} />}
@@ -542,7 +543,7 @@ function JobFormScreen({ heading, submitLabel, initialJob, onBack, onSubmit }: {
   );
 }
 
-function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete, onAcceptQuote }: { jobs: JobPost[]; quotes: Quote[]; onBack: () => void; onPostAnother: () => void; onEdit: (jobId: string) => void; onDelete: (job: JobPost) => void; onAcceptQuote: (job: JobPost, quote: Quote) => void }) {
+function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete, onAcceptQuote, onCancelMatch }: { jobs: JobPost[]; quotes: Quote[]; onBack: () => void; onPostAnother: () => void; onEdit: (jobId: string) => void; onDelete: (job: JobPost) => void; onAcceptQuote: (job: JobPost, quote: Quote) => void; onCancelMatch: (job: JobPost) => void }) {
   return (
     <>
       <Pressable onPress={onBack}><Text style={styles.back}>‹ 主頁</Text></Pressable>
@@ -560,13 +561,14 @@ function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete, o
           onEdit={() => onEdit(job.id)}
           onDelete={() => onDelete(job)}
           onAcceptQuote={(quote) => onAcceptQuote(job, quote)}
+          onCancelMatch={() => onCancelMatch(job)}
         />
       ))}
     </>
   );
 }
 
-function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote }: { job: JobPost; quotes: Quote[]; onEdit: () => void; onDelete: () => void; onAcceptQuote: (quote: Quote) => void }) {
+function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onCancelMatch }: { job: JobPost; quotes: Quote[]; onEdit: () => void; onDelete: () => void; onAcceptQuote: (quote: Quote) => void; onCancelMatch: () => void }) {
   const matched = !!job.acceptedQuoteId;
 
   return (
@@ -588,6 +590,9 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote }: { job
             <Text style={styles.matchedWorker}>{job.acceptedWorkerName}</Text>
             <Text style={styles.matchedPrice}>HK${job.acceptedPrice}</Text>
           </View>
+          <Pressable style={styles.cancelMatchButton} onPress={onCancelMatch}>
+            <Text style={styles.cancelMatchText}>取消已配對</Text>
+          </Pressable>
         </View>
       )}
 
