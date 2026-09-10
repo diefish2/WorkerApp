@@ -140,11 +140,11 @@ export default function ChatScreen() {
     async function markChatNotificationsRead(uid: string) {
       await supabase
         .from('notifications')
-        .update({ is_read: true })
+        .update({ read_at: new Date().toISOString() })
         .eq('recipient_id', uid)
         .eq('job_id', jobId)
         .eq('type', 'new_message')
-        .eq('is_read', false);
+        .is('read_at', null);
     }
 
     async function loadMessages() {
