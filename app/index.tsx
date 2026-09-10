@@ -15,7 +15,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { categories, jobs as demoJobs } from '../src/data/mockData';
 
 type AppMode = 'customer' | 'worker';
-type CustomerScreen = 'home' | 'post' | 'myJobs';
+type CustomerScreen = 'home' | 'post' | 'myJobs' | 'edit';
 
 type JobPost = {
   id: string;
@@ -29,25 +29,50 @@ type JobPost = {
   createdAt: string;
 };
 
+type JobFormData = Omit<JobPost, 'id' | 'status' | 'createdAt'>;
+
 export default function HomeScreen() {
   const [mode, setMode] = useState<AppMode>('customer');
   const [customerScreen, setCustomerScreen] = useState<CustomerScreen>('home');
   const [myJobs, setMyJobs] = useState<JobPost[]>([]);
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
+
+  const editingJob = myJobs.find((job) => job.id === editingJobId) ?? null;
 
   function switchMode(nextMode: AppMode) {
     setMode(nextMode);
     setCustomerScreen('home');
   }
 
-  function addJob(job: Omit<JobPost, 'id' | 'status' | 'createdAt'>) {
+  function addJob(data: JobFormData) {
     const newJob: JobPost = {
-      ...job,
+      ...data,
       id: `job-${Date.now()}`,
       status: '等待報價',
       createdAt: '剛剛',
     };
 
     setMyJobs((current) => [newJob, ...current]);
+    setCustomerScreen('myJobs');
+  }
+
+  function startEditing(jobId: string) {
+    setEditingJobId(jobId);
+    setCustomerScreen('edit');
+  }
+
+  function updateJob(data: JobFormData) {
+    if (!editingJobId) return;
+
+    setMyJobs((current) =>
+      current.map((job) =>
+        job.id === editingJobId
+          ? { ...job, ...data }
+          : job
+      )
+    );
+
+    setEditingJobId(null);
     setCustomerScreen('myJobs');
   }
 
@@ -85,9 +110,24 @@ export default function HomeScreen() {
         )}
 
         {mode === 'customer' && customerScreen === 'post' && (
-          <PostJobScreen
+          <JobFormScreen
+            heading="發佈需求"
+            submitLabel="發佈需求"
             onBack={() => setCustomerScreen('home')}
             onSubmit={addJob}
+          />
+        )}
+
+        {mode === 'customer' && customerScreen === 'edit' && editingJob && (
+          <JobFormScreen
+            heading="編輯需求"
+            submitLabel="儲存更改"
+            initialJob={editingJob}
+            onBack={() => {
+              setEditingJobId(null);
+              setCustomerScreen('myJobs');
+            }}
+            onSubmit={updateJob}
           />
         )}
 
@@ -96,6 +136,7 @@ export default function HomeScreen() {
             jobs={myJobs}
             onBack={() => setCustomerScreen('home')}
             onPostAnother={() => setCustomerScreen('post')}
+            onEdit={startEditing}
           />
         )}
 
@@ -163,18 +204,24 @@ function CustomerHome({
   );
 }
 
-function PostJobScreen({
+function JobFormScreen({
+  heading,
+  submitLabel,
+  initialJob,
   onBack,
   onSubmit,
 }: {
+  heading: string;
+  submitLabel: string;
+  initialJob?: JobPost;
   onBack: () => void;
-  onSubmit: (job: Omit<JobPost, 'id' | 'status' | 'createdAt'>) => void;
+  onSubmit: (data: JobFormData) => void;
 }) {
-  const [title, setTitle] = useState('');
-  const [details, setDetails] = useState('');
-  const [budget, setBudget] = useState('');
-  const [district, setDistrict] = useState('香港');
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [title, setTitle] = useState(initialJob?.title ?? '');
+  const [details, setDetails] = useState(initialJob?.details ?? '');
+  const [budget, setBudget] = useState(initialJob?.budget ?? '');
+  const [district, setDistrict] = useState(initialJob?.district ?? '香港');
+  const [photoUri, setPhotoUri] = useState<string | null>(initialJob?.photoUri ?? null);
 
   async function pickPhoto() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -194,7 +241,7 @@ function PostJobScreen({
     }
   }
 
-  function submitJob() {
+  function submit() {
     if (!title.trim()) {
       Alert.alert('請輸入需要', '例如：廚房水喉漏水');
       return;
@@ -205,7 +252,7 @@ function PostJobScreen({
       details: details.trim(),
       budget: budget.trim(),
       district: district.trim() || '香港',
-      category: '一般維修',
+      category: initialJob?.category ?? '一般維修',
       photoUri,
     });
   }
@@ -216,7 +263,7 @@ function PostJobScreen({
         <Text style={styles.back}>‹ 返回</Text>
       </Pressable>
 
-      <Text style={styles.pageTitle}>發佈需求</Text>
+      <Text style={styles.pageTitle}>{heading}</Text>
 
       <Text style={styles.label}>你需要咩幫手？</Text>
       <TextInput
@@ -273,8 +320,8 @@ function PostJobScreen({
       />
       <Text style={styles.currencyHint}>HKD</Text>
 
-      <Pressable style={styles.primaryButton} onPress={submitJob}>
-        <Text style={styles.primaryButtonText}>發佈需求</Text>
+      <Pressable style={styles.primaryButton} onPress={submit}>
+        <Text style={styles.primaryButtonText}>{submitLabel}</Text>
       </Pressable>
     </>
   );
@@ -284,10 +331,12 @@ function MyJobsScreen({
   jobs,
   onBack,
   onPostAnother,
+  onEdit,
 }: {
   jobs: JobPost[];
   onBack: () => void;
   onPostAnother: () => void;
+  onEdit: (jobId: string) => void;
 }) {
   return (
     <>
@@ -308,13 +357,15 @@ function MyJobsScreen({
           <Text style={styles.emptyText}>發佈第一個工作後，就會喺呢度見到。</Text>
         </View>
       ) : (
-        jobs.map((job) => <CustomerJobCard key={job.id} job={job} />)
+        jobs.map((job) => (
+          <CustomerJobCard key={job.id} job={job} onEdit={() => onEdit(job.id)} />
+        ))
       )}
     </>
   );
 }
 
-function CustomerJobCard({ job }: { job: JobPost }) {
+function CustomerJobCard({ job, onEdit }: { job: JobPost; onEdit: () => void }) {
   return (
     <View style={styles.jobCard}>
       {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
@@ -326,12 +377,15 @@ function CustomerJobCard({ job }: { job: JobPost }) {
 
       <Text style={styles.jobTitle}>{job.title}</Text>
       <Text style={styles.jobMeta}>📍 {job.district}</Text>
-
       {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
 
       <Text style={styles.jobBudget}>
         {job.budget ? `你嘅預算：HK$${job.budget}` : '未設定預算 · 等師傅報價'}
       </Text>
+
+      <Pressable style={styles.editButton} onPress={onEdit}>
+        <Text style={styles.editButtonText}>✏️ 編輯需求</Text>
+      </Pressable>
     </View>
   );
 }
@@ -342,7 +396,7 @@ function WorkerHome({ customerJobs }: { customerJobs: JobPost[] }) {
       <View style={styles.workerHero}>
         <Text style={styles.online}>● 在線接單</Text>
         <Text style={styles.heroTitle}>附近新工作</Text>
-        <Text style={styles.heroSubtitle}>客戶新發佈嘅需求會即時出現喺最上面。</Text>
+        <Text style={styles.heroSubtitle}>客戶更新需求後，呢度會即時顯示最新內容。</Text>
       </View>
 
       {customerJobs.map((job) => (
@@ -414,8 +468,8 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
   myJobsButton: { marginTop: 8, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE8E1', borderRadius: 14, padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   myJobsButtonText: { fontSize: 16, color: '#294338', fontWeight: '800' },
-  countBadge: { minWidth: 26, height: 26, borderRadius: 13, backgroundColor: '#E8F8EF', alignItems: 'center', justifyContent: 'center' },
-  countBadgeText: { color: '#0B8D4A', fontWeight: '800' },
+  countBadge: { minWidth: 28, height: 28, borderRadius: 14, backgroundColor: '#EAF8F0', alignItems: 'center', justifyContent: 'center' },
+  countBadgeText: { color: '#0B7A45', fontWeight: '800' },
   sectionTitle: { marginTop: 26, marginBottom: 14, fontSize: 20, fontWeight: '800', color: '#17251E' },
   categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10 },
   categoryCard: { width: '22.5%', backgroundColor: '#FFFFFF', paddingVertical: 14, borderRadius: 14, alignItems: 'center', borderWidth: 1, borderColor: '#E6ECE8' },
@@ -423,35 +477,37 @@ const styles = StyleSheet.create({
   categoryLabel: { fontSize: 13, fontWeight: '700', color: '#314139' },
   back: { color: '#0B8D4A', fontSize: 16, fontWeight: '700', marginBottom: 12 },
   pageTitle: { fontSize: 28, fontWeight: '800', color: '#17251E', marginBottom: 22 },
-  addAnother: { color: '#0B8D4A', fontWeight: '800', marginBottom: 22 },
   label: { fontSize: 15, fontWeight: '700', color: '#32443B', marginBottom: 8, marginTop: 12 },
   input: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE5DF', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: 16 },
   textArea: { minHeight: 110, textAlignVertical: 'top' },
   photoBox: { height: 105, borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#9DB5A8', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   photoPlus: { fontSize: 28, color: '#0FA958' },
   photoText: { color: '#597066', marginTop: 4, fontWeight: '600' },
-  photoPreviewCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 10, borderWidth: 1, borderColor: '#E1E9E4' },
-  photoPreview: { width: '100%', height: 220, borderRadius: 10, resizeMode: 'cover' },
+  photoPreviewCard: { backgroundColor: '#FFFFFF', padding: 10, borderRadius: 14, borderWidth: 1, borderColor: '#E1E9E4' },
+  photoPreview: { width: '100%', height: 210, borderRadius: 10 },
   photoActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
   secondaryButton: { flex: 1, paddingVertical: 11, borderRadius: 10, alignItems: 'center', backgroundColor: '#EDF3EF' },
   secondaryText: { color: '#315243', fontWeight: '800' },
   removeButton: { paddingHorizontal: 18, paddingVertical: 11, borderRadius: 10, backgroundColor: '#FFF0F0' },
-  removeText: { color: '#B43A3A', fontWeight: '800' },
-  currencyHint: { color: '#778980', marginTop: 6, marginBottom: 4 },
+  removeText: { color: '#B33A3A', fontWeight: '800' },
+  currencyHint: { color: '#778980', marginTop: 6 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  emptyCard: { backgroundColor: '#FFFFFF', padding: 24, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E4EBE7' },
-  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#24382E' },
-  emptyText: { marginTop: 8, color: '#6A7D73', textAlign: 'center' },
-  workerHero: { padding: 18, borderRadius: 18, backgroundColor: '#EAF8F0', marginBottom: 18 },
-  online: { color: '#0B8D4A', fontWeight: '800', marginBottom: 10 },
+  addAnother: { color: '#0B8D4A', fontWeight: '800', marginBottom: 22 },
+  emptyCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#E4EBE7' },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#22362C' },
+  emptyText: { color: '#718179', marginTop: 8, textAlign: 'center' },
   jobCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: '#E4EBE7' },
-  jobPhoto: { width: '100%', height: 180, borderRadius: 12, marginBottom: 14, resizeMode: 'cover' },
-  statusPill: { backgroundColor: '#FFF5D9', color: '#946D00', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
-  newPill: { backgroundColor: '#E7F8EE', color: '#0B8D4A', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
+  jobPhoto: { width: '100%', height: 185, borderRadius: 12, marginBottom: 14 },
+  statusPill: { backgroundColor: '#FFF7D6', color: '#806A00', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
+  newPill: { backgroundColor: '#EAF8F0', color: '#0B7A45', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
   categoryPill: { backgroundColor: '#EAF8F0', color: '#0B7A45', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
   time: { color: '#87968E', fontSize: 12 },
   jobTitle: { fontSize: 19, fontWeight: '800', color: '#1C3026', marginTop: 12 },
   jobMeta: { marginTop: 7, color: '#667A70' },
-  jobDetails: { marginTop: 10, color: '#4D6258', lineHeight: 21 },
+  jobDetails: { marginTop: 10, color: '#455A50', lineHeight: 21 },
   jobBudget: { marginTop: 12, fontSize: 17, fontWeight: '900', color: '#17251E' },
+  editButton: { marginTop: 14, borderWidth: 1, borderColor: '#B9D8C6', backgroundColor: '#F3FBF6', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  editButtonText: { color: '#0B7A45', fontWeight: '800', fontSize: 15 },
+  workerHero: { padding: 18, borderRadius: 18, backgroundColor: '#EAF8F0', marginBottom: 18 },
+  online: { color: '#0B8D4A', fontWeight: '800', marginBottom: 10 },
 });
