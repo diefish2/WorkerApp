@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -46,6 +46,8 @@ type JobPost = {
   acceptedQuoteId: string | null;
   acceptedWorkerName: string | null;
   acceptedPrice: string | null;
+  completedAt: string | null;
+  completionPhotoUrl: string | null;
 };
 
 type Quote = {
@@ -62,9 +64,28 @@ type Quote = {
   closeReason: QuoteCloseReason;
 };
 
+type WorkerReview = {
+  id: string;
+  jobId: string;
+  customerId: string;
+  workerId: string;
+  rating: number;
+  comment: string;
+  photoUrl: string | null;
+  createdAt: string;
+};
+
 type JobFormData = Omit<
   JobPost,
-  'id' | 'customerId' | 'status' | 'createdAt' | 'acceptedQuoteId' | 'acceptedWorkerName' | 'acceptedPrice'
+  | 'id'
+  | 'customerId'
+  | 'status'
+  | 'createdAt'
+  | 'acceptedQuoteId'
+  | 'acceptedWorkerName'
+  | 'acceptedPrice'
+  | 'completedAt'
+  | 'completionPhotoUrl'
 >;
 
 type DatabaseJob = {
@@ -81,6 +102,8 @@ type DatabaseJob = {
   accepted_quote_id: string | null;
   accepted_worker_name: string | null;
   accepted_price: string | null;
+  completed_at: string | null;
+  completion_photo_url: string | null;
 };
 
 type DatabaseQuote = {
@@ -95,6 +118,17 @@ type DatabaseQuote = {
   attempt_no: number;
   closed_at: string | null;
   close_reason: QuoteCloseReason;
+};
+
+type DatabaseReview = {
+  id: string;
+  job_id: string;
+  customer_id: string;
+  worker_id: string;
+  rating: number;
+  comment: string;
+  photo_url: string | null;
+  created_at: string;
 };
 
 function fromDatabaseJob(job: DatabaseJob): JobPost {
@@ -112,6 +146,8 @@ function fromDatabaseJob(job: DatabaseJob): JobPost {
     acceptedQuoteId: job.accepted_quote_id ?? null,
     acceptedWorkerName: job.accepted_worker_name ?? null,
     acceptedPrice: job.accepted_price ?? null,
+    completedAt: job.completed_at ?? null,
+    completionPhotoUrl: job.completion_photo_url ?? null,
   };
 }
 
@@ -131,6 +167,19 @@ function fromDatabaseQuote(quote: DatabaseQuote): Quote {
   };
 }
 
+function fromDatabaseReview(review: DatabaseReview): WorkerReview {
+  return {
+    id: review.id,
+    jobId: review.job_id,
+    customerId: review.customer_id,
+    workerId: review.worker_id,
+    rating: Number(review.rating),
+    comment: review.comment ?? '',
+    photoUrl: review.photo_url ?? null,
+    createdAt: new Date(review.created_at).toLocaleString('zh-HK'),
+  };
+}
+
 function isRemotePhoto(uri: string) {
   return /^https?:\/\//i.test(uri);
 }
@@ -144,10 +193,10 @@ function photoFileInfo(uri: string) {
   return { ext: 'jpg', contentType: 'image/jpeg' };
 }
 
-async function uploadJobPhoto(uri: string) {
+async function uploadPhoto(uri: string, folder: 'jobs' | 'completion' = 'jobs') {
   const { ext, contentType } = photoFileInfo(uri);
   const arrayBuffer = await fetch(uri).then((response) => response.arrayBuffer());
-  const filePath = `jobs/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+  const filePath = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
   const { data, error } = await supabase.storage.from(JOB_PHOTOS_BUCKET).upload(filePath, arrayBuffer, {
     contentType,
     cacheControl: '3600',
@@ -157,10 +206,10 @@ async function uploadJobPhoto(uri: string) {
   return supabase.storage.from(JOB_PHOTOS_BUCKET).getPublicUrl(data.path).data.publicUrl;
 }
 
-async function resolvePhotoUrl(uri: string | null) {
+async function resolvePhotoUrl(uri: string | null, folder: 'jobs' | 'completion' = 'jobs') {
   if (!uri) return null;
   if (isRemotePhoto(uri)) return uri;
-  return uploadJobPhoto(uri);
+  return uploadPhoto(uri, folder);
 }
 
 function isHongKongDistrict(value: string) {
@@ -171,16 +220,32 @@ function maxAttempt(quotes: Quote[]) {
   return quotes.reduce((highest, quote) => Math.max(highest, quote.attemptNo), 0);
 }
 
+function ratingSummary(reviews: WorkerReview[], workerId: string | null | undefined) {
+  if (!workerId) return { average: 0, count: 0 };
+  const workerReviews = reviews.filter((review) => review.workerId === workerId);
+  if (workerReviews.length === 0) return { average: 0, count: 0 };
+  const total = workerReviews.reduce((sum, review) => sum + review.rating, 0);
+  return { average: total / workerReviews.length, count: workerReviews.length };
+}
+
+function RatingText({ reviews, workerId }: { reviews: WorkerReview[]; workerId: string | null | undefined }) {
+  const summary = ratingSummary(reviews, workerId);
+  if (summary.count === 0) return <Text style={styles.noRating}>暫未有評分</Text>;
+  return <Text style={styles.ratingText}>★ {summary.average.toFixed(1)} ({summary.count})</Text>;
+}
+
 export default function HomeScreen() {
   const [mode, setMode] = useState<AppMode>('customer');
   const [customerScreen, setCustomerScreen] = useState<CustomerScreen>('home');
   const [jobs, setJobs] = useState<JobPost[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [reviews, setReviews] = useState<WorkerReview[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [presetCategory, setPresetCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [quoteJob, setQuoteJob] = useState<JobPost | null>(null);
+  const [completionJob, setCompletionJob] = useState<JobPost | null>(null);
 
   const myJobs = currentUserId ? jobs.filter((job) => job.customerId === currentUserId) : [];
   const editingJob = myJobs.find((job) => job.id === editingJobId) ?? null;
@@ -192,7 +257,7 @@ export default function HomeScreen() {
       const { data } = await supabase.auth.getSession();
       if (!mounted) return;
       setCurrentUserId(data.session?.user.id ?? null);
-      await Promise.all([loadJobs(), loadQuotes()]);
+      await Promise.all([loadJobs(), loadQuotes(), loadReviews()]);
       if (mounted) setLoading(false);
     }
 
@@ -206,11 +271,16 @@ export default function HomeScreen() {
       .channel('workerapp-quotes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, loadQuotes)
       .subscribe();
+    const reviewsChannel = supabase
+      .channel('workerapp-reviews')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'worker_reviews' }, loadReviews)
+      .subscribe();
 
     return () => {
       mounted = false;
       supabase.removeChannel(jobsChannel);
       supabase.removeChannel(quotesChannel);
+      supabase.removeChannel(reviewsChannel);
     };
   }, []);
 
@@ -222,6 +292,11 @@ export default function HomeScreen() {
   async function loadQuotes() {
     const { data, error } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
     if (!error) setQuotes(((data as DatabaseQuote[] | null) ?? []).map(fromDatabaseQuote));
+  }
+
+  async function loadReviews() {
+    const { data, error } = await supabase.from('worker_reviews').select('*').order('created_at', { ascending: false });
+    if (!error) setReviews(((data as DatabaseReview[] | null) ?? []).map(fromDatabaseReview));
   }
 
   function openPost(category?: string) {
@@ -272,6 +347,12 @@ export default function HomeScreen() {
 
   async function updateJob(data: JobFormData) {
     if (!editingJobId || !currentUserId) return;
+    const editing = jobs.find((job) => job.id === editingJobId);
+    if (editing?.completedAt) {
+      Alert.alert('已完成工作', '完成後嘅工作不能再編輯。');
+      return;
+    }
+
     let photoUrl: string | null = null;
     try {
       photoUrl = await resolvePhotoUrl(data.photoUri);
@@ -300,7 +381,7 @@ export default function HomeScreen() {
       return;
     }
     if (!updatedRows || updatedRows.length === 0) {
-      Alert.alert('無法更新', '你只可以編輯自己發佈嘅需求。');
+      Alert.alert('無法更新', '你只可以編輯自己未完成嘅需求。');
       await loadJobs();
       setCustomerScreen('myJobs');
       return;
@@ -312,6 +393,10 @@ export default function HomeScreen() {
   }
 
   function confirmDeleteJob(job: JobPost) {
+    if (job.completedAt) {
+      Alert.alert('不能刪除', '已完成工作會保留作服務及評分紀錄。');
+      return;
+    }
     Alert.alert('刪除需求？', `確定唔再需要「${job.title}」？刪除後所有相關報價都會一齊刪除。`, [
       { text: '取消', style: 'cancel' },
       { text: '刪除', style: 'destructive', onPress: () => deleteJob(job.id) },
@@ -331,10 +416,10 @@ export default function HomeScreen() {
       return;
     }
     if (!data || data.length === 0) {
-      Alert.alert('無法刪除', '你只可以刪除自己發佈嘅需求。');
+      Alert.alert('無法刪除', '你只可以刪除自己未完成嘅需求。');
       return;
     }
-    await Promise.all([loadJobs(), loadQuotes()]);
+    await Promise.all([loadJobs(), loadQuotes(), loadReviews()]);
   }
 
   async function submitQuote(jobId: string, workerName: string, price: string, message: string) {
@@ -351,21 +436,20 @@ export default function HomeScreen() {
 
     const job = jobs.find((item) => item.id === jobId);
     if (!job) return false;
-
+    if (job.completedAt) {
+      Alert.alert('工作已完成', '已完成工作不能再報價。');
+      return false;
+    }
     if (job.customerId === currentUserId) {
       Alert.alert('不能報價', '你唔可以對自己發佈嘅工作報價。');
       return false;
     }
-
     if (job.acceptedQuoteId) {
       Alert.alert('工作已配對', '客戶已經接受另一個報價。');
       return false;
     }
 
-    const myJobQuotes = quotes.filter(
-      (quote) => quote.jobId === jobId && quote.workerId === currentUserId
-    );
-
+    const myJobQuotes = quotes.filter((quote) => quote.jobId === jobId && quote.workerId === currentUserId);
     if (maxAttempt(myJobQuotes) >= MAX_QUOTE_ATTEMPTS) {
       Alert.alert('已達上限', '你對呢個工作已經用完 5 次報價機會。');
       return false;
@@ -404,7 +488,6 @@ export default function HomeScreen() {
       Alert.alert('歷史報價', '呢個報價已經失效，不能再接受。');
       return;
     }
-
     Alert.alert('接受呢個報價？', `${quote.workerName}：HK$${quote.price}\n\n接受後，工作會標記為「已配對」。`, [
       { text: '取消', style: 'cancel' },
       { text: '接受報價', onPress: () => acceptQuote(job, quote) },
@@ -412,32 +495,28 @@ export default function HomeScreen() {
   }
 
   async function acceptQuote(job: JobPost, quote: Quote) {
-    if (job.acceptedQuoteId || !quote.isActive) return;
-
+    if (job.acceptedQuoteId || !quote.isActive || job.completedAt) return;
     const { data, error } = await supabase.rpc('accept_job_quote', {
       p_job_id: job.id,
       p_quote_id: quote.id,
     });
-
     if (error) {
       const inactive = /no longer active/i.test(error.message);
       Alert.alert('接受失敗', inactive ? '呢個係歷史報價，已經不能接受。' : error.message);
       await Promise.all([loadJobs(), loadQuotes()]);
       return;
     }
-
     if (!data) {
       Alert.alert('已經配對', '呢個需求可能已經接受咗另一個報價。');
       await loadJobs();
       return;
     }
-
     await Promise.all([loadJobs(), loadQuotes()]);
     Alert.alert('配對成功', `你已選擇 ${quote.workerName}，報價 HK$${quote.price}。`);
   }
 
   function confirmDeclineQuote(job: JobPost, quote: Quote) {
-    if (!quote.isActive || job.acceptedQuoteId) return;
+    if (!quote.isActive || job.acceptedQuoteId || job.completedAt) return;
     Alert.alert(
       '拒絕呢個報價？',
       `${quote.workerName}：HK$${quote.price}\n\n拒絕後會保留喺歷史報價，師傅如果仲有次數可以再次報價。`,
@@ -453,22 +532,17 @@ export default function HomeScreen() {
       p_job_id: job.id,
       p_quote_id: quote.id,
     });
-
     if (error) {
       Alert.alert('拒絕失敗', error.message);
       await loadQuotes();
       return;
     }
-
-    if (!data) {
-      Alert.alert('狀態已更新', '呢個報價已經唔係可處理狀態。');
-    }
-
+    if (!data) Alert.alert('狀態已更新', '呢個報價已經唔係可處理狀態。');
     await loadQuotes();
   }
 
   function confirmCancelMatch(job: JobPost) {
-    if (!job.acceptedQuoteId) return;
+    if (!job.acceptedQuoteId || job.completedAt) return;
     Alert.alert('取消已配對工作？', `你確定要取消「${job.title}」嘅配對嗎？\n\n取消後，今輪報價會保留為歷史，工作會重新開放畀所有師傅報價。`, [
       { text: '保留配對', style: 'cancel' },
       { text: '確認取消', style: 'destructive', onPress: () => cancelMatch(job) },
@@ -476,29 +550,50 @@ export default function HomeScreen() {
   }
 
   async function cancelMatch(job: JobPost) {
-    if (!job.acceptedQuoteId) return;
-
-    const { data, error } = await supabase.rpc('cancel_job_match', {
-      p_job_id: job.id,
-    });
-
+    if (!job.acceptedQuoteId || job.completedAt) return;
+    const { data, error } = await supabase.rpc('cancel_job_match', { p_job_id: job.id });
     if (error) {
+      const completed = /completed jobs/i.test(error.message);
       const notAllowed = /not allowed/i.test(error.message);
       Alert.alert(
         '取消失敗',
-        notAllowed ? '只有發佈呢個需求嘅 Customer 或已配對嘅師傅可以取消。' : error.message
+        completed ? '已完成工作不能再取消。' : notAllowed ? '只有 Customer 或已配對師傅可以取消。' : error.message
       );
       return;
     }
-
     if (!data) {
       Alert.alert('狀態已更新', '呢個工作目前已經唔係配對狀態。');
       await loadJobs();
       return;
     }
-
     await Promise.all([loadJobs(), loadQuotes()]);
     Alert.alert('配對已取消', '舊報價已保留為歷史，工作已重新開放報價。');
+  }
+
+  async function completeJob(job: JobPost, rating: number, comment: string, photoUri: string | null) {
+    if (!job.acceptedQuoteId || job.completedAt) return false;
+    let photoUrl: string | null = null;
+    try {
+      photoUrl = await resolvePhotoUrl(photoUri, 'completion');
+    } catch (error: any) {
+      Alert.alert('完成相片上載失敗', error?.message ?? '請再試一次。');
+      return false;
+    }
+
+    const { error } = await supabase.rpc('complete_job_and_review', {
+      p_job_id: job.id,
+      p_rating: rating,
+      p_comment: comment.trim(),
+      p_photo_url: photoUrl,
+    });
+    if (error) {
+      Alert.alert('提交失敗', error.message);
+      return false;
+    }
+
+    await Promise.all([loadJobs(), loadReviews()]);
+    Alert.alert('工作已完成', `你已經畀 ${job.acceptedWorkerName ?? '師傅'} ${rating} 星評分。`);
+    return true;
   }
 
   return (
@@ -548,6 +643,7 @@ export default function HomeScreen() {
               <MyJobsScreen
                 jobs={myJobs}
                 quotes={quotes}
+                reviews={reviews}
                 onBack={() => setCustomerScreen('home')}
                 onPostAnother={() => openPost()}
                 onEdit={(jobId) => { setEditingJobId(jobId); setCustomerScreen('edit'); }}
@@ -555,12 +651,14 @@ export default function HomeScreen() {
                 onAcceptQuote={confirmAcceptQuote}
                 onDeclineQuote={confirmDeclineQuote}
                 onCancelMatch={confirmCancelMatch}
+                onCompleteJob={setCompletionJob}
               />
             )}
             {mode === 'worker' && (
               <WorkerHome
                 jobs={jobs}
                 quotes={quotes}
+                reviews={reviews}
                 currentUserId={currentUserId}
                 onQuote={setQuoteJob}
                 onCancelMatch={confirmCancelMatch}
@@ -577,6 +675,13 @@ export default function HomeScreen() {
         visible={!!quoteJob}
         onClose={() => setQuoteJob(null)}
         onSubmit={submitQuote}
+      />
+
+      <CompletionModal
+        job={completionJob}
+        visible={!!completionJob}
+        onClose={() => setCompletionJob(null)}
+        onSubmit={completeJob}
       />
     </SafeAreaView>
   );
@@ -600,9 +705,7 @@ function CustomerHome({ myJobCount, onPostJob, onMyJobs }: {
       <Text style={styles.location}>📍 香港</Text>
       <Text style={styles.heroTitle}>屋企有嘢要整？</Text>
       <Text style={styles.heroSubtitle}>出個需求，等附近師傅直接向你報價。</Text>
-      <Pressable style={styles.primaryButton} onPress={() => onPostJob()}>
-        <Text style={styles.primaryButtonText}>＋ 發佈需求</Text>
-      </Pressable>
+      <Pressable style={styles.primaryButton} onPress={() => onPostJob()}><Text style={styles.primaryButtonText}>＋ 發佈需求</Text></Pressable>
       <Pressable style={styles.myJobsButton} onPress={onMyJobs}>
         <Text style={styles.myJobsButtonText}>我的需求</Text>
         <View style={styles.countBadge}><Text style={styles.countBadgeText}>{myJobCount}</Text></View>
@@ -647,18 +750,9 @@ function JobFormScreen({ heading, submitLabel, initialJob, presetCategory, onBac
   }
 
   async function submit() {
-    if (!category) {
-      Alert.alert('請選擇服務類別', '例如電工、水喉、冷氣，或者其他。');
-      return;
-    }
-    if (!title.trim()) {
-      Alert.alert('請輸入需要', '例如：廚房水喉漏水');
-      return;
-    }
-    if (!district) {
-      Alert.alert('請選擇地區', '請選擇工作所在嘅香港地區。');
-      return;
-    }
+    if (!category) return Alert.alert('請選擇服務類別');
+    if (!title.trim()) return Alert.alert('請輸入需要');
+    if (!district) return Alert.alert('請選擇地區');
     setSubmitting(true);
     await onSubmit({ title: title.trim(), details: details.trim(), budget: budget.trim(), district, category, photoUri });
     setSubmitting(false);
@@ -668,9 +762,7 @@ function JobFormScreen({ heading, submitLabel, initialJob, presetCategory, onBac
     <>
       <Pressable onPress={onBack}><Text style={styles.back}>‹ 返回</Text></Pressable>
       <Text style={styles.pageTitle}>{heading}</Text>
-
       <Text style={styles.label}>服務類別</Text>
-      <Text style={styles.fieldHint}>先揀最接近你需要嘅類別</Text>
       <View style={styles.choiceGrid}>
         {categories.map((item) => {
           const selected = category === item.label;
@@ -682,14 +774,11 @@ function JobFormScreen({ heading, submitLabel, initialJob, presetCategory, onBac
           );
         })}
       </View>
-
       <Text style={styles.label}>你需要咩幫手？</Text>
       <TextInput value={title} onChangeText={setTitle} placeholder="例如：廚房水喉漏水" style={styles.input} />
       <Text style={styles.label}>詳細描述</Text>
       <TextInput value={details} onChangeText={setDetails} placeholder="講多少少情況…" multiline style={[styles.input, styles.textArea]} />
-
       <Text style={styles.label}>地區</Text>
-      <Text style={styles.fieldHint}>選擇工作所在嘅香港地區</Text>
       <View style={styles.districtGrid}>
         {HK_DISTRICTS.map((item) => {
           const selected = district === item;
@@ -700,7 +789,6 @@ function JobFormScreen({ heading, submitLabel, initialJob, presetCategory, onBac
           );
         })}
       </View>
-
       <Text style={styles.label}>相片</Text>
       {photoUri ? (
         <View style={styles.photoPreviewCard}>
@@ -711,11 +799,8 @@ function JobFormScreen({ heading, submitLabel, initialJob, presetCategory, onBac
           </View>
         </View>
       ) : (
-        <Pressable style={styles.photoBox} onPress={pickPhoto}>
-          <Text style={styles.photoPlus}>＋</Text><Text style={styles.photoText}>從相簿選擇相片</Text>
-        </Pressable>
+        <Pressable style={styles.photoBox} onPress={pickPhoto}><Text style={styles.photoPlus}>＋</Text><Text style={styles.photoText}>從相簿選擇相片</Text></Pressable>
       )}
-
       <Text style={styles.label}>你心目中嘅價錢（可選）</Text>
       <TextInput value={budget} onChangeText={(value) => setBudget(value.replace(/\D/g, ''))} placeholder="例如 600" keyboardType="numeric" style={styles.input} />
       <Text style={styles.currencyHint}>HKD</Text>
@@ -726,9 +811,10 @@ function JobFormScreen({ heading, submitLabel, initialJob, presetCategory, onBac
   );
 }
 
-function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete, onAcceptQuote, onDeclineQuote, onCancelMatch }: {
+function MyJobsScreen({ jobs, quotes, reviews, onBack, onPostAnother, onEdit, onDelete, onAcceptQuote, onDeclineQuote, onCancelMatch, onCompleteJob }: {
   jobs: JobPost[];
   quotes: Quote[];
+  reviews: WorkerReview[];
   onBack: () => void;
   onPostAnother: () => void;
   onEdit: (jobId: string) => void;
@@ -736,6 +822,7 @@ function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete, o
   onAcceptQuote: (job: JobPost, quote: Quote) => void;
   onDeclineQuote: (job: JobPost, quote: Quote) => void;
   onCancelMatch: (job: JobPost) => void;
+  onCompleteJob: (job: JobPost) => void;
 }) {
   return (
     <>
@@ -749,38 +836,43 @@ function MyJobsScreen({ jobs, quotes, onBack, onPostAnother, onEdit, onDelete, o
           key={job.id}
           job={job}
           quotes={quotes.filter((quote) => quote.jobId === job.id)}
+          reviews={reviews}
+          jobReview={reviews.find((review) => review.jobId === job.id) ?? null}
           onEdit={() => onEdit(job.id)}
           onDelete={() => onDelete(job)}
           onAcceptQuote={(quote) => onAcceptQuote(job, quote)}
           onDeclineQuote={(quote) => onDeclineQuote(job, quote)}
           onCancelMatch={() => onCancelMatch(job)}
+          onCompleteJob={() => onCompleteJob(job)}
         />
       ))}
     </>
   );
 }
 
-function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDeclineQuote, onCancelMatch }: {
+function CustomerJobCard({ job, quotes, reviews, jobReview, onEdit, onDelete, onAcceptQuote, onDeclineQuote, onCancelMatch, onCompleteJob }: {
   job: JobPost;
   quotes: Quote[];
+  reviews: WorkerReview[];
+  jobReview: WorkerReview | null;
   onEdit: () => void;
   onDelete: () => void;
   onAcceptQuote: (quote: Quote) => void;
   onDeclineQuote: (quote: Quote) => void;
   onCancelMatch: () => void;
+  onCompleteJob: () => void;
 }) {
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const matched = !!job.acceptedQuoteId;
+  const completed = !!job.completedAt;
   const activeQuotes = quotes.filter((quote) => quote.isActive);
-  const historyQuotes = quotes
-    .filter((quote) => !quote.isActive)
-    .sort((a, b) => b.attemptNo - a.attemptNo);
+  const historyQuotes = quotes.filter((quote) => !quote.isActive).sort((a, b) => b.attemptNo - a.attemptNo);
 
   return (
     <View style={styles.jobCard}>
       {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
       <View style={styles.rowBetween}>
-        <Text style={[styles.statusPill, matched && styles.matchedPill]}>{job.status}</Text>
+        <Text style={[styles.statusPill, matched && styles.matchedPill, completed && styles.completedPill]}>{job.status}</Text>
         <Text style={styles.time}>{job.createdAt}</Text>
       </View>
       <Text style={styles.jobTitle}>{job.title}</Text>
@@ -789,13 +881,31 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
       <Text style={styles.jobBudget}>{job.budget ? `你嘅預算：HK$${job.budget}` : '等師傅報價'}</Text>
 
       {matched && (
-        <View style={styles.matchedCard}>
-          <Text style={styles.matchedTitle}>✓ 已配對師傅</Text>
+        <View style={[styles.matchedCard, completed && styles.completedCard]}>
+          <Text style={styles.matchedTitle}>{completed ? '✓ 工作已完成' : '✓ 已配對師傅'}</Text>
           <View style={styles.rowBetween}>
-            <Text style={styles.matchedWorker}>{job.acceptedWorkerName}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.matchedWorker}>{job.acceptedWorkerName}</Text>
+              <RatingText reviews={reviews} workerId={quotes.find((quote) => quote.id === job.acceptedQuoteId)?.workerId} />
+            </View>
             <Text style={styles.matchedPrice}>HK${job.acceptedPrice}</Text>
           </View>
-          <Pressable style={styles.cancelMatchButton} onPress={onCancelMatch}><Text style={styles.cancelMatchText}>取消已配對</Text></Pressable>
+          {completed ? (
+            <>
+              {job.completionPhotoUrl ? <Image source={{ uri: job.completionPhotoUrl }} style={styles.completionImage} /> : null}
+              {jobReview ? (
+                <View style={styles.reviewBox}>
+                  <Text style={styles.reviewStars}>{'★'.repeat(jobReview.rating)}{'☆'.repeat(5 - jobReview.rating)}</Text>
+                  {jobReview.comment ? <Text style={styles.reviewComment}>{jobReview.comment}</Text> : null}
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <View style={styles.matchActionRow}>
+              <Pressable style={styles.completeButton} onPress={onCompleteJob}><Text style={styles.primaryButtonText}>完成工作及評分</Text></Pressable>
+              <Pressable style={styles.cancelMatchButtonInline} onPress={onCancelMatch}><Text style={styles.cancelMatchText}>取消配對</Text></Pressable>
+            </View>
+          )}
         </View>
       )}
 
@@ -811,7 +921,10 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
         return (
           <View key={quote.id} style={[styles.quoteCard, selected && styles.selectedQuoteCard]}>
             <View style={styles.rowBetween}>
-              <Text style={styles.workerName}>{quote.workerName}</Text>
+              <View>
+                <Text style={styles.workerName}>{quote.workerName}</Text>
+                <RatingText reviews={reviews} workerId={quote.workerId} />
+              </View>
               <Text style={styles.quotePrice}>HK${quote.price}</Text>
             </View>
             <Text style={styles.quoteAttempt}>第 {quote.attemptNo} 次報價</Text>
@@ -819,14 +932,10 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
             <Text style={styles.time}>{quote.createdAt}</Text>
             {selected ? (
               <Text style={styles.selectedLabel}>✓ 已接受呢個報價</Text>
-            ) : !matched ? (
+            ) : !matched && !completed ? (
               <View style={styles.quoteActionRow}>
-                <Pressable style={styles.acceptQuoteButtonInline} onPress={() => onAcceptQuote(quote)}>
-                  <Text style={styles.acceptQuoteText}>接受報價</Text>
-                </Pressable>
-                <Pressable style={styles.declineQuoteButton} onPress={() => onDeclineQuote(quote)}>
-                  <Text style={styles.declineQuoteText}>拒絕</Text>
-                </Pressable>
+                <Pressable style={styles.acceptQuoteButtonInline} onPress={() => onAcceptQuote(quote)}><Text style={styles.acceptQuoteText}>接受報價</Text></Pressable>
+                <Pressable style={styles.declineQuoteButton} onPress={() => onDeclineQuote(quote)}><Text style={styles.declineQuoteText}>拒絕</Text></Pressable>
               </View>
             ) : (
               <Text style={styles.notSelectedLabel}>未獲選</Text>
@@ -847,11 +956,7 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
           {historyExpanded && (
             <>
               {historyQuotes.map((quote) => {
-                const historyStatus = quote.closeReason === 'declined'
-                  ? '已拒絕'
-                  : quote.closeReason === 'match_cancelled'
-                    ? '配對已取消'
-                    : '師傅已更新報價';
+                const historyStatus = quote.closeReason === 'declined' ? '已拒絕' : quote.closeReason === 'match_cancelled' ? '配對已取消' : '師傅已更新報價';
                 return (
                   <View key={quote.id} style={styles.historyRow}>
                     <View style={styles.historyMain}>
@@ -868,23 +973,27 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
         </View>
       )}
 
-      <View style={styles.jobActions}>
-        <Pressable style={styles.editButton} onPress={onEdit}><Text style={styles.editButtonText}>✏️ 編輯</Text></Pressable>
-        <Pressable style={styles.deleteButton} onPress={onDelete}><Text style={styles.deleteButtonText}>刪除需求</Text></Pressable>
-      </View>
+      {!completed && (
+        <View style={styles.jobActions}>
+          <Pressable style={styles.editButton} onPress={onEdit}><Text style={styles.editButtonText}>✏️ 編輯</Text></Pressable>
+          <Pressable style={styles.deleteButton} onPress={onDelete}><Text style={styles.deleteButtonText}>刪除需求</Text></Pressable>
+        </View>
+      )}
     </View>
   );
 }
 
-function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
+function WorkerHome({ jobs, quotes, reviews, currentUserId, onQuote, onCancelMatch }: {
   jobs: JobPost[];
   quotes: Quote[];
+  reviews: WorkerReview[];
   currentUserId: string | null;
   onQuote: (job: JobPost) => void;
   onCancelMatch: (job: JobPost) => void;
 }) {
   const [districtFilter, setDistrictFilter] = useState<DistrictFilter>('全部地區');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('全部類別');
+  const ownRating = ratingSummary(reviews, currentUserId);
 
   const filteredJobs = jobs.filter((job) => {
     const districtMatches = districtFilter === '全部地區' || job.district === districtFilter;
@@ -898,17 +1007,16 @@ function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
         <Text style={styles.online}>● Realtime 已連線</Text>
         <Text style={styles.heroTitle}>附近新工作</Text>
         <Text style={styles.heroSubtitle}>可以按服務類別同地區篩選工作。</Text>
+        {currentUserId ? (
+          <Text style={styles.workerRatingHero}>{ownRating.count > 0 ? `你的評分 ★ ${ownRating.average.toFixed(1)} (${ownRating.count} 個評價)` : '你的評分：暫未有評價'}</Text>
+        ) : null}
       </View>
 
       <Text style={styles.filterLabel}>服務類別</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
         {(['全部類別', ...SERVICE_LABELS] as CategoryFilter[]).map((item) => {
           const selected = categoryFilter === item;
-          return (
-            <Pressable key={item} style={[styles.filterChip, selected && styles.filterChipActive]} onPress={() => setCategoryFilter(item)}>
-              <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>{item}</Text>
-            </Pressable>
-          );
+          return <Pressable key={item} style={[styles.filterChip, selected && styles.filterChipActive]} onPress={() => setCategoryFilter(item)}><Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>{item}</Text></Pressable>;
         })}
       </ScrollView>
 
@@ -916,32 +1024,28 @@ function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
         {(['全部地區', ...HK_DISTRICTS] as DistrictFilter[]).map((item) => {
           const selected = districtFilter === item;
-          return (
-            <Pressable key={item} style={[styles.filterChip, selected && styles.filterChipActive]} onPress={() => setDistrictFilter(item)}>
-              <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>{item}</Text>
-            </Pressable>
-          );
+          return <Pressable key={item} style={[styles.filterChip, selected && styles.filterChipActive]} onPress={() => setDistrictFilter(item)}><Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>{item}</Text></Pressable>;
         })}
       </ScrollView>
 
       <Text style={styles.filterSummary}>符合條件：{filteredJobs.length} 個工作</Text>
       {filteredJobs.length === 0 ? <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有符合條件嘅工作</Text></View> : filteredJobs.map((job) => {
         const matched = !!job.acceptedQuoteId;
+        const completed = !!job.completedAt;
         const acceptedQuote = matched ? quotes.find((quote) => quote.id === job.acceptedQuoteId) : null;
         const isAcceptedWorker = !!currentUserId && acceptedQuote?.workerId === currentUserId;
         const isOwnJob = !!currentUserId && job.customerId === currentUserId;
-        const myQuotes = currentUserId
-          ? quotes.filter((quote) => quote.jobId === job.id && quote.workerId === currentUserId)
-          : [];
+        const myQuotes = currentUserId ? quotes.filter((quote) => quote.jobId === job.id && quote.workerId === currentUserId) : [];
         const activeMyQuote = myQuotes.find((quote) => quote.isActive);
         const usedAttempts = maxAttempt(myQuotes);
         const remainingAttempts = Math.max(0, MAX_QUOTE_ATTEMPTS - usedAttempts);
+        const jobReview = reviews.find((review) => review.jobId === job.id) ?? null;
 
         return (
           <View key={job.id} style={styles.jobCard}>
             {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
             <View style={styles.rowBetween}>
-              <Text style={[styles.newPill, matched && styles.matchedPill]}>{matched ? '已配對' : '新工作'}</Text>
+              <Text style={[styles.newPill, matched && styles.matchedPill, completed && styles.completedPill]}>{completed ? '已完成' : matched ? '已配對' : '新工作'}</Text>
               <Text style={styles.time}>{job.createdAt}</Text>
             </View>
             <Text style={styles.jobTitle}>{job.title}</Text>
@@ -951,51 +1055,42 @@ function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
 
             {matched ? (
               <View style={styles.workerMatchedCard}>
-                <Text style={styles.matchedTitle}>{isAcceptedWorker ? '✓ 你已獲客戶接受' : '🔒 已配對 / Deal sealed'}</Text>
+                <Text style={styles.matchedTitle}>{completed ? '✓ 工作已完成' : isAcceptedWorker ? '✓ 你已獲客戶接受' : '🔒 已配對 / Deal sealed'}</Text>
                 {isAcceptedWorker ? (
                   <>
                     <Text style={styles.jobDetails}>已接受：{job.acceptedWorkerName} · HK${job.acceptedPrice}</Text>
-                    <Text style={styles.attemptInfo}>如果配對取消，今次報價會保留為歷史。</Text>
-                    <Pressable style={styles.cancelMatchButton} onPress={() => onCancelMatch(job)}>
-                      <Text style={styles.cancelMatchText}>取消已配對</Text>
-                    </Pressable>
+                    {completed ? (
+                      <>
+                        {jobReview ? <Text style={styles.reviewStars}>{'★'.repeat(jobReview.rating)}{'☆'.repeat(5 - jobReview.rating)}</Text> : null}
+                        {jobReview?.comment ? <Text style={styles.reviewComment}>「{jobReview.comment}」</Text> : null}
+                        {job.completionPhotoUrl ? <Image source={{ uri: job.completionPhotoUrl }} style={styles.completionImage} /> : null}
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.attemptInfo}>完成後由客戶確認並留下評分。</Text>
+                        <Pressable style={styles.cancelMatchButton} onPress={() => onCancelMatch(job)}><Text style={styles.cancelMatchText}>取消已配對</Text></Pressable>
+                      </>
+                    )}
                   </>
                 ) : (
-                  <Text style={styles.jobDetails}>客戶已經選擇師傅，暫時唔再接受報價。</Text>
+                  <Text style={styles.jobDetails}>{completed ? '呢個工作已經完成。' : '客戶已經選擇師傅，暫時唔再接受報價。'}</Text>
                 )}
               </View>
             ) : isOwnJob ? (
-              <View style={styles.ownJobCard}>
-                <Text style={styles.ownJobTitle}>你發佈的工作</Text>
-                <Text style={styles.jobDetails}>你唔可以對自己嘅工作報價。</Text>
-              </View>
-            ) : (
+              <View style={styles.ownJobCard}><Text style={styles.ownJobTitle}>你發佈的工作</Text><Text style={styles.jobDetails}>你唔可以對自己嘅工作報價。</Text></View>
+            ) : completed ? null : (
               <>
-                <Text style={styles.attemptInfo}>
-                  報價機會：剩餘 {remainingAttempts} 次（最多 {MAX_QUOTE_ATTEMPTS} 次）
-                </Text>
+                <Text style={styles.attemptInfo}>報價機會：剩餘 {remainingAttempts} 次（最多 {MAX_QUOTE_ATTEMPTS} 次）</Text>
                 {activeMyQuote ? (
                   <>
                     <Text style={styles.currentQuoteInfo}>目前報價：HK${activeMyQuote.price} · 第 {activeMyQuote.attemptNo} 次</Text>
                     <Text style={styles.fieldHint}>再次提交新價會使用 1 次報價機會。</Text>
-                    {remainingAttempts > 0 ? (
-                      <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}>
-                        <Text style={styles.primaryButtonText}>重新報價</Text>
-                      </Pressable>
-                    ) : (
-                      <View style={styles.limitCard}>
-                        <Text style={styles.limitText}>已用完 5 次報價機會</Text>
-                      </View>
-                    )}
+                    {remainingAttempts > 0 ? <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}><Text style={styles.primaryButtonText}>重新報價</Text></Pressable> : <View style={styles.limitCard}><Text style={styles.limitText}>已用完 5 次報價機會</Text></View>}
                   </>
                 ) : remainingAttempts > 0 ? (
-                  <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}>
-                    <Text style={styles.primaryButtonText}>{usedAttempts > 0 ? '再次報價' : '立即報價'}</Text>
-                  </Pressable>
+                  <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}><Text style={styles.primaryButtonText}>{usedAttempts > 0 ? '再次報價' : '立即報價'}</Text></Pressable>
                 ) : (
-                  <View style={styles.limitCard}>
-                    <Text style={styles.limitText}>已用完 5 次報價機會</Text>
-                  </View>
+                  <View style={styles.limitCard}><Text style={styles.limitText}>已用完 5 次報價機會</Text></View>
                 )}
               </>
             )}
@@ -1021,38 +1116,22 @@ function QuoteModal({ job, quotes, currentUserId, visible, onClose, onSubmit }: 
 
   useEffect(() => {
     let active = true;
-
     async function prepareQuote() {
       if (!visible || !job) return;
-
-      const activeQuote = currentUserId
-        ? quotes.find((quote) => quote.jobId === job.id && quote.workerId === currentUserId && quote.isActive)
-        : null;
-
+      const activeQuote = currentUserId ? quotes.find((quote) => quote.jobId === job.id && quote.workerId === currentUserId && quote.isActive) : null;
       setPrice(activeQuote?.price ?? '');
       setMessage(activeQuote?.message ?? '');
-
       const { data: userData } = await supabase.auth.getUser();
       const uid = userData.user?.id;
       if (!uid || !active) {
         if (active) setWorkerName(activeQuote?.workerName || '師傅');
         return;
       }
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('display_name')
-        .eq('id', uid)
-        .maybeSingle();
-
+      const { data: profile } = await supabase.from('profiles').select('display_name').eq('id', uid).maybeSingle();
       if (active) setWorkerName(profile?.display_name?.trim() || activeQuote?.workerName || '師傅');
     }
-
     prepareQuote();
-
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [visible, job?.id, currentUserId, quotes]);
 
   async function submit() {
@@ -1066,9 +1145,7 @@ function QuoteModal({ job, quotes, currentUserId, visible, onClose, onSubmit }: 
     }
   }
 
-  const myJobQuotes = job && currentUserId
-    ? quotes.filter((quote) => quote.jobId === job.id && quote.workerId === currentUserId)
-    : [];
+  const myJobQuotes = job && currentUserId ? quotes.filter((quote) => quote.jobId === job.id && quote.workerId === currentUserId) : [];
   const activeQuote = myJobQuotes.find((quote) => quote.isActive) ?? null;
   const usedAttempts = maxAttempt(myJobQuotes);
   const remainingAttempts = Math.max(0, MAX_QUOTE_ATTEMPTS - usedAttempts);
@@ -1079,33 +1156,90 @@ function QuoteModal({ job, quotes, currentUserId, visible, onClose, onSubmit }: 
       <View style={styles.modalBackdrop}><View style={styles.modalCard}>
         <Text style={styles.modalTitle}>{activeQuote ? '重新報價' : usedAttempts > 0 ? '再次報價' : '提交報價'}</Text>
         <Text style={styles.modalJob}>{job?.category} · {job?.title}</Text>
-        <Text style={styles.attemptInfo}>
-          {remainingAttempts > 0
-            ? `今次會係第 ${nextAttempt} 次報價；提交後剩餘 ${Math.max(0, remainingAttempts - 1)} 次。`
-            : '你已經用完 5 次報價機會。'}
-        </Text>
+        <Text style={styles.attemptInfo}>{remainingAttempts > 0 ? `今次會係第 ${nextAttempt} 次報價；提交後剩餘 ${Math.max(0, remainingAttempts - 1)} 次。` : '你已經用完 5 次報價機會。'}</Text>
         <Text style={styles.label}>師傅名稱</Text>
         <TextInput value={workerName} onChangeText={setWorkerName} style={styles.input} />
         <Text style={styles.fieldHint}>預設名稱可以喺「帳戶」修改。</Text>
         <Text style={styles.label}>報價（HKD）</Text>
-        <TextInput
-          value={price}
-          onChangeText={(value) => setPrice(value.replace(/\D/g, ''))}
-          keyboardType="number-pad"
-          inputMode="numeric"
-          placeholder="例如 600"
-          style={styles.input}
-        />
+        <TextInput value={price} onChangeText={(value) => setPrice(value.replace(/\D/g, ''))} keyboardType="number-pad" inputMode="numeric" placeholder="例如 600" style={styles.input} />
         <Text style={styles.label}>留言（可選）</Text>
         <TextInput value={message} onChangeText={setMessage} placeholder="例如：今日下午可以上門，包基本材料。" multiline style={[styles.input, styles.textAreaSmall]} />
         <View style={styles.modalActions}>
           <Pressable style={styles.secondaryButton} onPress={onClose}><Text style={styles.secondaryText}>取消</Text></Pressable>
-          <Pressable
-            style={[styles.acceptButton, (submitting || remainingAttempts === 0) && styles.disabledButton]}
-            onPress={submit}
-            disabled={submitting || remainingAttempts === 0}
-          >
+          <Pressable style={[styles.acceptButton, (submitting || remainingAttempts === 0) && styles.disabledButton]} onPress={submit} disabled={submitting || remainingAttempts === 0}>
             <Text style={styles.primaryButtonText}>{submitting ? '送出中...' : '送出報價'}</Text>
+          </Pressable>
+        </View>
+      </View></View>
+    </Modal>
+  );
+}
+
+function CompletionModal({ job, visible, onClose, onSubmit }: {
+  job: JobPost | null;
+  visible: boolean;
+  onClose: () => void;
+  onSubmit: (job: JobPost, rating: number, comment: string, photoUri: string | null) => Promise<boolean>;
+}) {
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setRating(5);
+      setComment('');
+      setPhotoUri(null);
+    }
+  }, [visible, job?.id]);
+
+  async function pickPhoto() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return Alert.alert('需要相簿權限', '請允許 WorkerApp 存取相片。');
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+    if (!result.canceled && result.assets.length > 0) setPhotoUri(result.assets[0].uri);
+  }
+
+  async function submit() {
+    if (!job) return;
+    setSubmitting(true);
+    const ok = await onSubmit(job, rating, comment, photoUri);
+    setSubmitting(false);
+    if (ok) onClose();
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}><View style={styles.modalCard}>
+        <Text style={styles.modalTitle}>完成工作及評分</Text>
+        <Text style={styles.modalJob}>{job?.acceptedWorkerName} · {job?.title}</Text>
+        <Text style={styles.label}>你會畀師傅幾多星？</Text>
+        <View style={styles.starRow}>
+          {[1, 2, 3, 4, 5].map((star) => (
+            <Pressable key={star} onPress={() => setRating(star)}><Text style={[styles.starButton, star <= rating && styles.starButtonActive]}>★</Text></Pressable>
+          ))}
+        </View>
+        <Text style={styles.ratingChoice}>{rating} / 5 星</Text>
+        <Text style={styles.label}>完成相片（可選）</Text>
+        {photoUri ? (
+          <View style={styles.photoPreviewCard}>
+            <Image source={{ uri: photoUri }} style={styles.completionPreview} />
+            <View style={styles.photoActions}>
+              <Pressable style={styles.secondaryButton} onPress={pickPhoto}><Text style={styles.secondaryText}>更換相片</Text></Pressable>
+              <Pressable style={styles.removeButton} onPress={() => setPhotoUri(null)}><Text style={styles.removeText}>移除</Text></Pressable>
+            </View>
+          </View>
+        ) : (
+          <Pressable style={styles.photoBoxSmall} onPress={pickPhoto}><Text style={styles.photoPlus}>＋</Text><Text style={styles.photoText}>加入完成相片</Text></Pressable>
+        )}
+        <Text style={styles.label}>評語（可選）</Text>
+        <TextInput value={comment} onChangeText={setComment} placeholder="例如：準時、手工好、解釋清楚。" multiline style={[styles.input, styles.textAreaSmall]} />
+        <Text style={styles.completionHint}>提交後工作會標記為「已完成」，評分會計入師傅公開星級，而且不能再取消配對。</Text>
+        <View style={styles.modalActions}>
+          <Pressable style={styles.secondaryButton} onPress={onClose}><Text style={styles.secondaryText}>返回</Text></Pressable>
+          <Pressable style={[styles.acceptButton, submitting && styles.disabledButton]} onPress={submit} disabled={submitting}>
+            <Text style={styles.primaryButtonText}>{submitting ? '提交中...' : '確認完成'}</Text>
           </Pressable>
         </View>
       </View></View>
@@ -1162,10 +1296,12 @@ const styles = StyleSheet.create({
   districtChipText: { color: '#4D6559', fontWeight: '700', fontSize: 13 },
   districtChipTextActive: { color: '#FFFFFF' },
   photoBox: { height: 105, borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#9DB5A8', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  photoBoxSmall: { height: 82, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#9DB5A8', backgroundColor: '#F9FBFA', alignItems: 'center', justifyContent: 'center' },
   photoPlus: { fontSize: 28, color: '#0FA958' },
   photoText: { color: '#597066', marginTop: 4, fontWeight: '600' },
   photoPreviewCard: { backgroundColor: '#FFFFFF', padding: 10, borderRadius: 14, borderWidth: 1, borderColor: '#E1E9E4' },
   photoPreview: { width: '100%', height: 210, borderRadius: 10 },
+  completionPreview: { width: '100%', height: 160, borderRadius: 10 },
   photoActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
   secondaryButton: { flex: 1, paddingVertical: 11, borderRadius: 10, alignItems: 'center', backgroundColor: '#EDF3EF' },
   secondaryText: { color: '#315243', fontWeight: '800' },
@@ -1181,6 +1317,7 @@ const styles = StyleSheet.create({
   statusPill: { backgroundColor: '#FFF7D6', color: '#806A00', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
   newPill: { backgroundColor: '#EAF8F0', color: '#0B7A45', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, overflow: 'hidden' },
   matchedPill: { backgroundColor: '#E5F4FF', color: '#176A9A' },
+  completedPill: { backgroundColor: '#EAF8F0', color: '#0B7A45' },
   time: { color: '#87968E', fontSize: 12 },
   jobTitle: { fontSize: 19, fontWeight: '800', color: '#1C3026', marginTop: 12 },
   jobMeta: { marginTop: 7, color: '#667A70' },
@@ -1193,6 +1330,7 @@ const styles = StyleSheet.create({
   deleteButtonText: { color: '#B33A3A', fontWeight: '800', fontSize: 15 },
   workerHero: { padding: 18, borderRadius: 18, backgroundColor: '#EAF8F0', marginBottom: 18 },
   online: { color: '#0B8D4A', fontWeight: '800', marginBottom: 10 },
+  workerRatingHero: { marginTop: 6, color: '#8A6700', fontWeight: '900' },
   filterLabel: { fontSize: 15, fontWeight: '900', color: '#263A30', marginBottom: 10 },
   filterRow: { gap: 8, paddingRight: 10 },
   filterChip: { borderWidth: 1, borderColor: '#D7E2DB', backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 13, paddingVertical: 9 },
@@ -1217,6 +1355,8 @@ const styles = StyleSheet.create({
   acceptQuoteText: { color: '#FFFFFF', fontWeight: '800' },
   selectedLabel: { marginTop: 10, color: '#0B7A45', fontWeight: '800' },
   notSelectedLabel: { marginTop: 10, color: '#89968F', fontWeight: '700' },
+  ratingText: { color: '#A87800', fontWeight: '900', fontSize: 12, marginTop: 3 },
+  noRating: { color: '#8C9992', fontSize: 11, marginTop: 3 },
   historyList: { marginTop: 14, backgroundColor: '#F6F7F6', borderRadius: 12, borderWidth: 1, borderColor: '#E2E6E3', paddingHorizontal: 12, paddingVertical: 10 },
   historyListHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   historyListTitle: { color: '#56665E', fontWeight: '900', fontSize: 13 },
@@ -1230,10 +1370,14 @@ const styles = StyleSheet.create({
   historyPrice: { color: '#637168', fontWeight: '900', fontSize: 13 },
   historyFootnote: { color: '#929C97', fontSize: 10, marginTop: 3 },
   matchedCard: { marginTop: 14, backgroundColor: '#EAF8F0', borderRadius: 12, padding: 13, borderWidth: 1, borderColor: '#B9DFC8' },
+  completedCard: { backgroundColor: '#F4FBF6', borderColor: '#96D5AE' },
   matchedTitle: { color: '#0B7A45', fontWeight: '900', marginBottom: 8 },
   matchedWorker: { fontSize: 17, fontWeight: '900', color: '#22362C' },
   matchedPrice: { fontSize: 18, fontWeight: '900', color: '#0B7A45' },
   workerMatchedCard: { marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: '#F1F5F3' },
+  matchActionRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  completeButton: { flex: 1.45, backgroundColor: '#0FA958', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  cancelMatchButtonInline: { flex: 0.8, borderWidth: 1, borderColor: '#E7A6A6', backgroundColor: '#FFF5F5', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   attemptInfo: { marginTop: 12, color: '#52675C', fontWeight: '800', fontSize: 13 },
   currentQuoteInfo: { marginTop: 7, color: '#0B7A45', fontWeight: '900', fontSize: 14 },
   ownJobCard: { marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: '#F3F5F4', borderWidth: 1, borderColor: '#DDE3DF' },
@@ -1242,8 +1386,17 @@ const styles = StyleSheet.create({
   limitText: { color: '#7A8680', fontWeight: '900' },
   cancelMatchButton: { marginTop: 10, borderWidth: 1, borderColor: '#E7A6A6', backgroundColor: '#FFF5F5', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   cancelMatchText: { color: '#B33A3A', fontWeight: '800', fontSize: 15 },
+  completionImage: { width: '100%', height: 170, borderRadius: 10, marginTop: 12 },
+  reviewBox: { marginTop: 10, backgroundColor: '#FFFFFF', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: '#DCEAE0' },
+  reviewStars: { color: '#D89B00', fontSize: 20, fontWeight: '900', marginTop: 6 },
+  reviewComment: { color: '#42564B', lineHeight: 20, marginTop: 6 },
+  starRow: { flexDirection: 'row', gap: 9, marginTop: 2 },
+  starButton: { fontSize: 35, color: '#D9DEDB' },
+  starButtonActive: { color: '#D89B00' },
+  ratingChoice: { color: '#7B6500', fontWeight: '800', marginTop: 4 },
+  completionHint: { color: '#6F7E76', fontSize: 12, lineHeight: 18, marginTop: 12 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
-  modalCard: { backgroundColor: '#FFFFFF', padding: 20, paddingBottom: 34, borderTopLeftRadius: 22, borderTopRightRadius: 22 },
+  modalCard: { backgroundColor: '#FFFFFF', padding: 20, paddingBottom: 34, borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%' },
   modalTitle: { fontSize: 24, fontWeight: '900', color: '#17251E' },
   modalJob: { marginTop: 6, marginBottom: 8, color: '#667A70' },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 18 },
