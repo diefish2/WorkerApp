@@ -809,13 +809,41 @@ function QuoteModal({ job, visible, onClose, onSubmit }: {
   onClose: () => void;
   onSubmit: (jobId: string, workerName: string, price: string, message: string) => Promise<boolean>;
 }) {
-  const [workerName, setWorkerName] = useState('陳師傅');
+  const [workerName, setWorkerName] = useState('師傅');
   const [price, setPrice] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (visible) { setPrice(''); setMessage(''); }
+    let active = true;
+
+    async function prepareQuote() {
+      if (!visible) return;
+
+      setPrice('');
+      setMessage('');
+
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData.user?.id;
+      if (!uid || !active) {
+        if (active) setWorkerName('師傅');
+        return;
+      }
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('display_name')
+        .eq('id', uid)
+        .maybeSingle();
+
+      if (active) setWorkerName(profile?.display_name?.trim() || '師傅');
+    }
+
+    prepareQuote();
+
+    return () => {
+      active = false;
+    };
   }, [visible, job?.id]);
 
   async function submit() {
@@ -836,6 +864,7 @@ function QuoteModal({ job, visible, onClose, onSubmit }: {
         <Text style={styles.modalJob}>{job?.category} · {job?.title}</Text>
         <Text style={styles.label}>師傅名稱</Text>
         <TextInput value={workerName} onChangeText={setWorkerName} style={styles.input} />
+        <Text style={styles.fieldHint}>預設名稱可以喺「帳戶」修改。</Text>
         <Text style={styles.label}>報價（HKD）</Text>
         <TextInput value={price} onChangeText={setPrice} keyboardType="numeric" placeholder="例如 600" style={styles.input} />
         <Text style={styles.label}>留言（可選）</Text>
