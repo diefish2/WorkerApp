@@ -769,6 +769,7 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
   onDeclineQuote: (quote: Quote) => void;
   onCancelMatch: () => void;
 }) {
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const matched = !!job.acceptedQuoteId;
   const activeQuotes = quotes.filter((quote) => quote.isActive);
   const historyQuotes = quotes
@@ -836,27 +837,34 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
 
       {historyQuotes.length > 0 && (
         <View style={styles.historyList}>
-          <View style={styles.historyListHeader}>
+          <Pressable style={styles.historyListHeader} onPress={() => setHistoryExpanded((expanded) => !expanded)}>
             <Text style={styles.historyListTitle}>歷史報價</Text>
-            <Text style={styles.historyListCount}>{historyQuotes.length}</Text>
-          </View>
-          {historyQuotes.map((quote) => {
-            const historyStatus = quote.closeReason === 'declined'
-              ? '已拒絕'
-              : quote.closeReason === 'match_cancelled'
-                ? '配對已取消'
-                : '師傅已更新報價';
-            return (
-              <View key={quote.id} style={styles.historyRow}>
-                <View style={styles.historyMain}>
-                  <Text style={styles.historyName} numberOfLines={1}>{quote.workerName}</Text>
-                  <Text style={styles.historyMeta}>第 {quote.attemptNo} 次 · {historyStatus}</Text>
-                </View>
-                <Text style={styles.historyPrice}>HK${quote.price}</Text>
-              </View>
-            );
-          })}
-          <Text style={styles.historyFootnote}>歷史報價只供查看，不能再接受。</Text>
+            <View style={styles.historyHeaderRight}>
+              <Text style={styles.historyListCount}>{historyQuotes.length}</Text>
+              <Text style={styles.historyChevron}>{historyExpanded ? '▲' : '▼'}</Text>
+            </View>
+          </Pressable>
+          {historyExpanded && (
+            <>
+              {historyQuotes.map((quote) => {
+                const historyStatus = quote.closeReason === 'declined'
+                  ? '已拒絕'
+                  : quote.closeReason === 'match_cancelled'
+                    ? '配對已取消'
+                    : '師傅已更新報價';
+                return (
+                  <View key={quote.id} style={styles.historyRow}>
+                    <View style={styles.historyMain}>
+                      <Text style={styles.historyName} numberOfLines={1}>{quote.workerName}</Text>
+                      <Text style={styles.historyMeta}>第 {quote.attemptNo} 次 · {historyStatus}</Text>
+                    </View>
+                    <Text style={styles.historyPrice}>HK${quote.price}</Text>
+                  </View>
+                );
+              })}
+              <Text style={styles.historyFootnote}>歷史報價只供查看，不能再接受。</Text>
+            </>
+          )}
         </View>
       )}
 
@@ -1210,9 +1218,11 @@ const styles = StyleSheet.create({
   selectedLabel: { marginTop: 10, color: '#0B7A45', fontWeight: '800' },
   notSelectedLabel: { marginTop: 10, color: '#89968F', fontWeight: '700' },
   historyList: { marginTop: 14, backgroundColor: '#F6F7F6', borderRadius: 12, borderWidth: 1, borderColor: '#E2E6E3', paddingHorizontal: 12, paddingVertical: 10 },
-  historyListHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 },
+  historyListHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   historyListTitle: { color: '#56665E', fontWeight: '900', fontSize: 13 },
+  historyHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   historyListCount: { color: '#7D8983', fontWeight: '800', fontSize: 12 },
+  historyChevron: { color: '#7D8983', fontWeight: '900', fontSize: 11 },
   historyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#E8ECE9' },
   historyMain: { flex: 1, paddingRight: 12 },
   historyName: { color: '#42534A', fontWeight: '800', fontSize: 13 },
