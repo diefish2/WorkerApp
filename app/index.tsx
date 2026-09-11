@@ -49,6 +49,7 @@ type JobPost = {
 type Quote = {
   id: string;
   jobId: string;
+  workerId: string | null;
   workerName: string;
   price: string;
   message: string;
@@ -79,6 +80,7 @@ type DatabaseJob = {
 type DatabaseQuote = {
   id: string;
   job_id: string;
+  worker_id: string | null;
   worker_name: string;
   price: string;
   message: string;
@@ -107,6 +109,7 @@ function fromDatabaseQuote(quote: DatabaseQuote): Quote {
   return {
     id: quote.id,
     jobId: quote.job_id,
+    workerId: quote.worker_id ?? null,
     workerName: quote.worker_name,
     price: quote.price,
     message: quote.message ?? '',
@@ -376,7 +379,7 @@ export default function HomeScreen() {
 
   function confirmCancelMatch(job: JobPost) {
     if (!job.acceptedQuoteId) return;
-    Alert.alert('取消已配對工作？', `你確定要取消「${job.title}」嘅配對嗎？`, [
+    Alert.alert('取消已配對工作？', `你確定要取消「${job.title}」嘅配對嗎？\n\n取消後，呢個工作會重新開放畀所有師傅報價。`, [
       { text: '保留配對', style: 'cancel' },
       { text: '確認取消', style: 'destructive', onPress: () => cancelMatch(job) },
     ]);
@@ -405,7 +408,7 @@ export default function HomeScreen() {
     }
 
     await loadJobs();
-    Alert.alert('已取消配對', '工作已重新變成「等待報價」。');
+    Alert.alert('配對已取消', '工作已重新開放報價。');
   }
 
   return (
@@ -463,7 +466,15 @@ export default function HomeScreen() {
                 onCancelMatch={confirmCancelMatch}
               />
             )}
-            {mode === 'worker' && <WorkerHome jobs={jobs} onQuote={setQuoteJob} onCancelMatch={confirmCancelMatch} />}
+            {mode === 'worker' && (
+              <WorkerHome
+                jobs={jobs}
+                quotes={quotes}
+                currentUserId={currentUserId}
+                onQuote={setQuoteJob}
+                onCancelMatch={confirmCancelMatch}
+              />
+            )}
           </>
         )}
       </ScrollView>
@@ -703,8 +714,10 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onCance
   );
 }
 
-function WorkerHome({ jobs, onQuote, onCancelMatch }: {
+function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
   jobs: JobPost[];
+  quotes: Quote[];
+  currentUserId: string | null;
   onQuote: (job: JobPost) => void;
   onCancelMatch: (job: JobPost) => void;
 }) {
@@ -752,6 +765,9 @@ function WorkerHome({ jobs, onQuote, onCancelMatch }: {
       <Text style={styles.filterSummary}>符合條件：{filteredJobs.length} 個工作</Text>
       {filteredJobs.length === 0 ? <View style={styles.emptyCard}><Text style={styles.emptyTitle}>暫時未有符合條件嘅工作</Text></View> : filteredJobs.map((job) => {
         const matched = !!job.acceptedQuoteId;
+        const acceptedQuote = matched ? quotes.find((quote) => quote.id === job.acceptedQuoteId) : null;
+        const isAcceptedWorker = !!currentUserId && acceptedQuote?.workerId === currentUserId;
+
         return (
           <View key={job.id} style={styles.jobCard}>
             {job.photoUri && <Image source={{ uri: job.photoUri }} style={styles.jobPhoto} />}
@@ -765,9 +781,17 @@ function WorkerHome({ jobs, onQuote, onCancelMatch }: {
             <Text style={styles.jobBudget}>{job.budget ? `客人預算：HK$${job.budget}` : '客人等你報價'}</Text>
             {matched ? (
               <View style={styles.workerMatchedCard}>
-                <Text style={styles.matchedTitle}>呢個工作已經配對</Text>
-                <Text style={styles.jobDetails}>已接受：{job.acceptedWorkerName} · HK${job.acceptedPrice}</Text>
-                <Pressable style={styles.cancelMatchButton} onPress={() => onCancelMatch(job)}><Text style={styles.cancelMatchText}>取消已配對</Text></Pressable>
+                <Text style={styles.matchedTitle}>{isAcceptedWorker ? '✓ 你已獲客戶接受' : '🔒 已配對 / Deal sealed'}</Text>
+                {isAcceptedWorker ? (
+                  <>
+                    <Text style={styles.jobDetails}>已接受：{job.acceptedWorkerName} · HK${job.acceptedPrice}</Text>
+                    <Pressable style={styles.cancelMatchButton} onPress={() => onCancelMatch(job)}>
+                      <Text style={styles.cancelMatchText}>取消已配對</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <Text style={styles.jobDetails}>客戶已經選擇師傅，暫時唔再接受報價。</Text>
+                )}
               </View>
             ) : (
               <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}><Text style={styles.primaryButtonText}>立即報價</Text></Pressable>
