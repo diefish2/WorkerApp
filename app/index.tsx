@@ -18,6 +18,7 @@ import { categories } from '../src/data/mockData';
 import { supabase } from '../src/lib/supabase';
 
 const JOB_PHOTOS_BUCKET = 'job-photos';
+const MAX_QUOTE_ATTEMPTS = 5;
 const HK_DISTRICTS = [
   '中西區', '灣仔', '東區', '南區', '油尖旺', '深水埗', '九龍城', '黃大仙', '觀塘',
   '葵青', '荃灣', '屯門', '元朗', '北區', '大埔', '沙田', '西貢', '離島',
@@ -54,6 +55,9 @@ type Quote = {
   price: string;
   message: string;
   createdAt: string;
+  isActive: boolean;
+  attemptNo: number;
+  closedAt: string | null;
 };
 
 type JobFormData = Omit<
@@ -85,6 +89,9 @@ type DatabaseQuote = {
   price: string;
   message: string;
   created_at: string;
+  is_active: boolean;
+  attempt_no: number;
+  closed_at: string | null;
 };
 
 function fromDatabaseJob(job: DatabaseJob): JobPost {
@@ -114,6 +121,9 @@ function fromDatabaseQuote(quote: DatabaseQuote): Quote {
     price: quote.price,
     message: quote.message ?? '',
     createdAt: new Date(quote.created_at).toLocaleString('zh-HK'),
+    isActive: quote.is_active ?? true,
+    attemptNo: quote.attempt_no ?? 1,
+    closedAt: quote.closed_at ?? null,
   };
 }
 
@@ -331,14 +341,22 @@ export default function HomeScreen() {
     }
 
     const job = jobs.find((item) => item.id === jobId);
-    if (job?.acceptedQuoteId) {
+    if (!job) return false;
+
+    if (job.customerId === currentUserId) {
+      Alert.alert('不能報價', '你唔可以對自己發佈嘅工作報價。');
+      return false;
+    }
+
+    if (job.acceptedQuoteId) {
       Alert.alert('工作已配對', '客戶已經接受另一個報價。');
       return false;
     }
 
-    const existingQuote = quotes.find(
+    const myJobQuotes = quotes.filter(
       (quote) => quote.jobId === jobId && quote.workerId === currentUserId
     );
+    const existingQuote = myJobQuotes.find((quote) => quote.isActive);
 
     let error: any = null;
 
@@ -351,9 +369,15 @@ export default function HomeScreen() {
           message: message.trim(),
         })
         .eq('id', existingQuote.id)
-        .eq('worker_id', currentUserId);
+        .eq('worker_id', currentUserId)
+        .eq('is_active', true);
       error = result.error;
     } else {
+      if (myJobQuotes.length >= MAX_QUOTE_ATTEMPTS) {
+        Alert.alert('已達上限', '你對呢個工作已經用完 5 次報價機會。');
+        return false;
+      }
+
       const result = await supabase.from('quotes').insert({
         job_id: jobId,
         worker_id: currentUserId,
@@ -365,7 +389,16 @@ export default function HomeScreen() {
     }
 
     if (error) {
-      Alert.alert('報價失敗', error.message);
+      const limitReached = /attempt limit/i.test(error.message);
+      const ownJob = /own job/i.test(error.message);
+      Alert.alert(
+        '報價失敗',
+        limitReached
+          ? '你對呢個工作已經用完 5 次報價機會。'
+          : ownJob
+            ? '你唔可以對自己發佈嘅工作報價。'
+            : error.message
+      );
       return false;
     }
 
@@ -374,6 +407,11 @@ export default function HomeScreen() {
   }
 
   function confirmAcceptQuote(job: JobPost, quote: Quote) {
+    if (!quote.isActive) {
+      Alert.alert('歷史報價', '呢個報價已經失效，不能再接受。');
+      return;
+    }
+
     Alert.alert('接受呢個報價？', `${quote.workerName}：HK$${quote.price}\n\n接受後，工作會標記為「已配對」。`, [
       { text: '取消', style: 'cancel' },
       { text: '接受報價', onPress: () => acceptQuote(job, quote) },
@@ -381,35 +419,33 @@ export default function HomeScreen() {
   }
 
   async function acceptQuote(job: JobPost, quote: Quote) {
-    if (job.acceptedQuoteId) return;
-    const { data, error } = await supabase
-      .from('jobs')
-      .update({
-        accepted_quote_id: quote.id,
-        accepted_worker_name: quote.workerName,
-        accepted_price: quote.price,
-        status: '已配對',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', job.id)
-      .is('accepted_quote_id', null)
-      .select('id');
+    if (job.acceptedQuoteId || !quote.isActive) return;
+
+    const { data, error } = await supabase.rpc('accept_job_quote', {
+      p_job_id: job.id,
+      p_quote_id: quote.id,
+    });
+
     if (error) {
-      Alert.alert('接受失敗', error.message);
+      const inactive = /no longer active/i.test(error.message);
+      Alert.alert('接受失敗', inactive ? '呢個係歷史報價，已經不能接受。' : error.message);
+      await Promise.all([loadJobs(), loadQuotes()]);
       return;
     }
-    if (!data || data.length === 0) {
+
+    if (!data) {
       Alert.alert('已經配對', '呢個需求可能已經接受咗另一個報價。');
       await loadJobs();
       return;
     }
+
     await loadJobs();
     Alert.alert('配對成功', `你已選擇 ${quote.workerName}，報價 HK$${quote.price}。`);
   }
 
   function confirmCancelMatch(job: JobPost) {
     if (!job.acceptedQuoteId) return;
-    Alert.alert('取消已配對工作？', `你確定要取消「${job.title}」嘅配對嗎？\n\n取消後，呢個工作會重新開放畀所有師傅報價。`, [
+    Alert.alert('取消已配對工作？', `你確定要取消「${job.title}」嘅配對嗎？\n\n取消後，今輪報價會保留為歷史，工作會重新開放畀所有師傅報價。`, [
       { text: '保留配對', style: 'cancel' },
       { text: '確認取消', style: 'destructive', onPress: () => cancelMatch(job) },
     ]);
@@ -437,8 +473,8 @@ export default function HomeScreen() {
       return;
     }
 
-    await loadJobs();
-    Alert.alert('配對已取消', '工作已重新開放報價。');
+    await Promise.all([loadJobs(), loadQuotes()]);
+    Alert.alert('配對已取消', '舊報價已保留為歷史，工作已重新開放報價。');
   }
 
   return (
@@ -509,7 +545,14 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
-      <QuoteModal job={quoteJob} visible={!!quoteJob} onClose={() => setQuoteJob(null)} onSubmit={submitQuote} />
+      <QuoteModal
+        job={quoteJob}
+        quotes={quotes}
+        currentUserId={currentUserId}
+        visible={!!quoteJob}
+        onClose={() => setQuoteJob(null)}
+        onSubmit={submitQuote}
+      />
     </SafeAreaView>
   );
 }
@@ -721,18 +764,31 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onCance
         </View>
       )}
       <View style={styles.quoteHeader}>
-        <Text style={styles.quoteSectionTitle}>收到嘅報價</Text><Text style={styles.quoteCount}>{quotes.length}</Text>
+        <Text style={styles.quoteSectionTitle}>報價紀錄</Text><Text style={styles.quoteCount}>{quotes.length}</Text>
       </View>
       {quotes.length === 0 ? <Text style={styles.noQuotes}>暫時未有師傅報價。</Text> : quotes.map((quote) => {
         const selected = quote.id === job.acceptedQuoteId;
+        const historical = !quote.isActive;
         return (
-          <View key={quote.id} style={[styles.quoteCard, selected && styles.selectedQuoteCard]}>
-            <View style={styles.rowBetween}><Text style={styles.workerName}>{quote.workerName}</Text><Text style={styles.quotePrice}>HK${quote.price}</Text></View>
+          <View key={quote.id} style={[styles.quoteCard, selected && styles.selectedQuoteCard, historical && styles.historyQuoteCard]}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.workerName}>{quote.workerName}</Text>
+              <Text style={[styles.quotePrice, historical && styles.historyQuotePrice]}>HK${quote.price}</Text>
+            </View>
+            <Text style={[styles.quoteAttempt, historical && styles.historyLabel]}>
+              {historical ? `歷史報價 · 第 ${quote.attemptNo} 次` : `目前報價 · 第 ${quote.attemptNo} 次`}
+            </Text>
             {quote.message ? <Text style={styles.quoteMessage}>{quote.message}</Text> : null}
             <Text style={styles.time}>{quote.createdAt}</Text>
-            {selected ? <Text style={styles.selectedLabel}>✓ 已接受呢個報價</Text> : !matched ? (
+            {historical ? (
+              <Text style={styles.historyLabel}>已失效 · 只供查看，不能接受</Text>
+            ) : selected ? (
+              <Text style={styles.selectedLabel}>✓ 已接受呢個報價</Text>
+            ) : !matched ? (
               <Pressable style={styles.acceptQuoteButton} onPress={() => onAcceptQuote(quote)}><Text style={styles.acceptQuoteText}>接受報價</Text></Pressable>
-            ) : <Text style={styles.notSelectedLabel}>未獲選</Text>}
+            ) : (
+              <Text style={styles.notSelectedLabel}>未獲選</Text>
+            )}
           </View>
         );
       })}
@@ -797,6 +853,12 @@ function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
         const matched = !!job.acceptedQuoteId;
         const acceptedQuote = matched ? quotes.find((quote) => quote.id === job.acceptedQuoteId) : null;
         const isAcceptedWorker = !!currentUserId && acceptedQuote?.workerId === currentUserId;
+        const isOwnJob = !!currentUserId && job.customerId === currentUserId;
+        const myQuotes = currentUserId
+          ? quotes.filter((quote) => quote.jobId === job.id && quote.workerId === currentUserId)
+          : [];
+        const activeMyQuote = myQuotes.find((quote) => quote.isActive);
+        const remainingAttempts = Math.max(0, MAX_QUOTE_ATTEMPTS - myQuotes.length);
 
         return (
           <View key={job.id} style={styles.jobCard}>
@@ -809,12 +871,14 @@ function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
             <Text style={styles.jobMeta}>🧰 {job.category}　📍 {job.district}</Text>
             {job.details ? <Text style={styles.jobDetails}>{job.details}</Text> : null}
             <Text style={styles.jobBudget}>{job.budget ? `客人預算：HK$${job.budget}` : '客人等你報價'}</Text>
+
             {matched ? (
               <View style={styles.workerMatchedCard}>
                 <Text style={styles.matchedTitle}>{isAcceptedWorker ? '✓ 你已獲客戶接受' : '🔒 已配對 / Deal sealed'}</Text>
                 {isAcceptedWorker ? (
                   <>
                     <Text style={styles.jobDetails}>已接受：{job.acceptedWorkerName} · HK${job.acceptedPrice}</Text>
+                    <Text style={styles.attemptInfo}>如果配對取消，今次報價會保留為歷史。</Text>
                     <Pressable style={styles.cancelMatchButton} onPress={() => onCancelMatch(job)}>
                       <Text style={styles.cancelMatchText}>取消已配對</Text>
                     </Pressable>
@@ -823,8 +887,34 @@ function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
                   <Text style={styles.jobDetails}>客戶已經選擇師傅，暫時唔再接受報價。</Text>
                 )}
               </View>
+            ) : isOwnJob ? (
+              <View style={styles.ownJobCard}>
+                <Text style={styles.ownJobTitle}>你發佈的工作</Text>
+                <Text style={styles.jobDetails}>你唔可以對自己嘅工作報價。</Text>
+              </View>
             ) : (
-              <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}><Text style={styles.primaryButtonText}>立即報價</Text></Pressable>
+              <>
+                <Text style={styles.attemptInfo}>
+                  報價機會：剩餘 {remainingAttempts} 次（最多 {MAX_QUOTE_ATTEMPTS} 次）
+                </Text>
+                {activeMyQuote ? (
+                  <>
+                    <Text style={styles.currentQuoteInfo}>目前報價：HK${activeMyQuote.price} · 第 {activeMyQuote.attemptNo} 次</Text>
+                    <Text style={styles.fieldHint}>修改目前報價唔會扣多一次機會。</Text>
+                    <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}>
+                      <Text style={styles.primaryButtonText}>修改目前報價</Text>
+                    </Pressable>
+                  </>
+                ) : remainingAttempts > 0 ? (
+                  <Pressable style={styles.primaryButtonSmall} onPress={() => onQuote(job)}>
+                    <Text style={styles.primaryButtonText}>立即報價</Text>
+                  </Pressable>
+                ) : (
+                  <View style={styles.limitCard}>
+                    <Text style={styles.limitText}>已用完 5 次報價機會</Text>
+                  </View>
+                )}
+              </>
             )}
           </View>
         );
@@ -833,8 +923,10 @@ function WorkerHome({ jobs, quotes, currentUserId, onQuote, onCancelMatch }: {
   );
 }
 
-function QuoteModal({ job, visible, onClose, onSubmit }: {
+function QuoteModal({ job, quotes, currentUserId, visible, onClose, onSubmit }: {
   job: JobPost | null;
+  quotes: Quote[];
+  currentUserId: string | null;
   visible: boolean;
   onClose: () => void;
   onSubmit: (jobId: string, workerName: string, price: string, message: string) => Promise<boolean>;
@@ -848,15 +940,19 @@ function QuoteModal({ job, visible, onClose, onSubmit }: {
     let active = true;
 
     async function prepareQuote() {
-      if (!visible) return;
+      if (!visible || !job) return;
 
-      setPrice('');
-      setMessage('');
+      const activeQuote = currentUserId
+        ? quotes.find((quote) => quote.jobId === job.id && quote.workerId === currentUserId && quote.isActive)
+        : null;
+
+      setPrice(activeQuote?.price ?? '');
+      setMessage(activeQuote?.message ?? '');
 
       const { data: userData } = await supabase.auth.getUser();
       const uid = userData.user?.id;
       if (!uid || !active) {
-        if (active) setWorkerName('師傅');
+        if (active) setWorkerName(activeQuote?.workerName || '師傅');
         return;
       }
 
@@ -866,7 +962,7 @@ function QuoteModal({ job, visible, onClose, onSubmit }: {
         .eq('id', uid)
         .maybeSingle();
 
-      if (active) setWorkerName(profile?.display_name?.trim() || '師傅');
+      if (active) setWorkerName(profile?.display_name?.trim() || activeQuote?.workerName || '師傅');
     }
 
     prepareQuote();
@@ -874,7 +970,7 @@ function QuoteModal({ job, visible, onClose, onSubmit }: {
     return () => {
       active = false;
     };
-  }, [visible, job?.id]);
+  }, [visible, job?.id, currentUserId, quotes]);
 
   async function submit() {
     if (!job) return;
@@ -882,16 +978,29 @@ function QuoteModal({ job, visible, onClose, onSubmit }: {
     const ok = await onSubmit(job.id, workerName, price, message);
     setSubmitting(false);
     if (ok) {
-      Alert.alert('報價已送出', '客戶會即時喺「我的需求」收到。');
+      Alert.alert('報價已送出', '客戶會即時喺「我的需求」收到最新報價。');
       onClose();
     }
   }
 
+  const activeQuote = job && currentUserId
+    ? quotes.find((quote) => quote.jobId === job.id && quote.workerId === currentUserId && quote.isActive)
+    : null;
+  const usedAttempts = job && currentUserId
+    ? quotes.filter((quote) => quote.jobId === job.id && quote.workerId === currentUserId).length
+    : 0;
+  const remainingAttempts = Math.max(0, MAX_QUOTE_ATTEMPTS - usedAttempts);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalBackdrop}><View style={styles.modalCard}>
-        <Text style={styles.modalTitle}>提交報價</Text>
+        <Text style={styles.modalTitle}>{activeQuote ? '修改報價' : '提交報價'}</Text>
         <Text style={styles.modalJob}>{job?.category} · {job?.title}</Text>
+        <Text style={styles.attemptInfo}>
+          {activeQuote
+            ? `目前係第 ${activeQuote.attemptNo} 次報價；修改唔會扣次數。`
+            : `提交後剩餘 ${Math.max(0, remainingAttempts - 1)} 次重新報價機會。`}
+        </Text>
         <Text style={styles.label}>師傅名稱</Text>
         <TextInput value={workerName} onChangeText={setWorkerName} style={styles.input} />
         <Text style={styles.fieldHint}>預設名稱可以喺「帳戶」修改。</Text>
@@ -901,7 +1010,9 @@ function QuoteModal({ job, visible, onClose, onSubmit }: {
         <TextInput value={message} onChangeText={setMessage} placeholder="例如：今日下午可以上門，包基本材料。" multiline style={[styles.input, styles.textAreaSmall]} />
         <View style={styles.modalActions}>
           <Pressable style={styles.secondaryButton} onPress={onClose}><Text style={styles.secondaryText}>取消</Text></Pressable>
-          <Pressable style={[styles.acceptButton, submitting && styles.disabledButton]} onPress={submit} disabled={submitting}><Text style={styles.primaryButtonText}>{submitting ? '送出中...' : '送出報價'}</Text></Pressable>
+          <Pressable style={[styles.acceptButton, submitting && styles.disabledButton]} onPress={submit} disabled={submitting}>
+            <Text style={styles.primaryButtonText}>{submitting ? '送出中...' : activeQuote ? '更新報價' : '送出報價'}</Text>
+          </Pressable>
         </View>
       </View></View>
     </Modal>
@@ -1001,8 +1112,12 @@ const styles = StyleSheet.create({
   noQuotes: { marginTop: 10, color: '#7A8B82' },
   quoteCard: { marginTop: 10, backgroundColor: '#F7FAF8', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E1E9E4' },
   selectedQuoteCard: { borderColor: '#7AC79A', backgroundColor: '#F1FBF5' },
+  historyQuoteCard: { opacity: 0.72, backgroundColor: '#F2F4F3', borderColor: '#D8DEDA' },
   workerName: { fontSize: 16, fontWeight: '800', color: '#22362C' },
   quotePrice: { fontSize: 18, fontWeight: '900', color: '#0B7A45' },
+  historyQuotePrice: { color: '#6F7D76' },
+  quoteAttempt: { marginTop: 6, color: '#0B7A45', fontSize: 12, fontWeight: '800' },
+  historyLabel: { marginTop: 8, color: '#7A8680', fontWeight: '800', fontSize: 12 },
   quoteMessage: { marginTop: 8, marginBottom: 6, color: '#455A50', lineHeight: 20 },
   acceptQuoteButton: { marginTop: 10, backgroundColor: '#0FA958', borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
   acceptQuoteText: { color: '#FFFFFF', fontWeight: '800' },
@@ -1013,6 +1128,12 @@ const styles = StyleSheet.create({
   matchedWorker: { fontSize: 17, fontWeight: '900', color: '#22362C' },
   matchedPrice: { fontSize: 18, fontWeight: '900', color: '#0B7A45' },
   workerMatchedCard: { marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: '#F1F5F3' },
+  attemptInfo: { marginTop: 12, color: '#52675C', fontWeight: '800', fontSize: 13 },
+  currentQuoteInfo: { marginTop: 7, color: '#0B7A45', fontWeight: '900', fontSize: 14 },
+  ownJobCard: { marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: '#F3F5F4', borderWidth: 1, borderColor: '#DDE3DF' },
+  ownJobTitle: { color: '#526158', fontWeight: '900' },
+  limitCard: { marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: '#F3F5F4', alignItems: 'center' },
+  limitText: { color: '#7A8680', fontWeight: '900' },
   cancelMatchButton: { marginTop: 10, borderWidth: 1, borderColor: '#E7A6A6', backgroundColor: '#FFF5F5', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   cancelMatchText: { color: '#B33A3A', fontWeight: '800', fontSize: 15 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
