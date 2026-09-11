@@ -324,21 +324,51 @@ export default function HomeScreen() {
       Alert.alert('請輸入報價');
       return false;
     }
+
+    if (!currentUserId) {
+      Alert.alert('登入已失效', '請重新登入後再報價。');
+      return false;
+    }
+
     const job = jobs.find((item) => item.id === jobId);
     if (job?.acceptedQuoteId) {
       Alert.alert('工作已配對', '客戶已經接受另一個報價。');
       return false;
     }
-    const { error } = await supabase.from('quotes').insert({
-      job_id: jobId,
-      worker_name: workerName.trim() || '師傅',
-      price: price.trim(),
-      message: message.trim(),
-    });
+
+    const existingQuote = quotes.find(
+      (quote) => quote.jobId === jobId && quote.workerId === currentUserId
+    );
+
+    let error: any = null;
+
+    if (existingQuote) {
+      const result = await supabase
+        .from('quotes')
+        .update({
+          worker_name: workerName.trim() || '師傅',
+          price: price.trim(),
+          message: message.trim(),
+        })
+        .eq('id', existingQuote.id)
+        .eq('worker_id', currentUserId);
+      error = result.error;
+    } else {
+      const result = await supabase.from('quotes').insert({
+        job_id: jobId,
+        worker_id: currentUserId,
+        worker_name: workerName.trim() || '師傅',
+        price: price.trim(),
+        message: message.trim(),
+      });
+      error = result.error;
+    }
+
     if (error) {
       Alert.alert('報價失敗', error.message);
       return false;
     }
+
     await loadQuotes();
     return true;
   }
