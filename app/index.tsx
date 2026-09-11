@@ -772,7 +772,7 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
   const matched = !!job.acceptedQuoteId;
   const activeQuotes = quotes.filter((quote) => quote.isActive);
   const historyQuotes = quotes
-    .filter((quote) => !quote.isActive && (quote.closeReason === 'declined' || quote.closeReason === 'match_cancelled'))
+    .filter((quote) => !quote.isActive)
     .sort((a, b) => b.attemptNo - a.attemptNo);
 
   return (
@@ -820,11 +820,11 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
               <Text style={styles.selectedLabel}>✓ 已接受呢個報價</Text>
             ) : !matched ? (
               <View style={styles.quoteActionRow}>
-                <Pressable style={styles.declineQuoteButton} onPress={() => onDeclineQuote(quote)}>
-                  <Text style={styles.declineQuoteText}>拒絕</Text>
-                </Pressable>
                 <Pressable style={styles.acceptQuoteButtonInline} onPress={() => onAcceptQuote(quote)}>
                   <Text style={styles.acceptQuoteText}>接受報價</Text>
+                </Pressable>
+                <Pressable style={styles.declineQuoteButton} onPress={() => onDeclineQuote(quote)}>
+                  <Text style={styles.declineQuoteText}>拒絕</Text>
                 </Pressable>
               </View>
             ) : (
@@ -840,17 +840,22 @@ function CustomerJobCard({ job, quotes, onEdit, onDelete, onAcceptQuote, onDecli
             <Text style={styles.historyListTitle}>歷史報價</Text>
             <Text style={styles.historyListCount}>{historyQuotes.length}</Text>
           </View>
-          {historyQuotes.map((quote) => (
-            <View key={quote.id} style={styles.historyRow}>
-              <View style={styles.historyMain}>
-                <Text style={styles.historyName} numberOfLines={1}>{quote.workerName}</Text>
-                <Text style={styles.historyMeta}>
-                  第 {quote.attemptNo} 次 · {quote.closeReason === 'declined' ? '已拒絕' : '配對已取消'}
-                </Text>
+          {historyQuotes.map((quote) => {
+            const historyStatus = quote.closeReason === 'declined'
+              ? '已拒絕'
+              : quote.closeReason === 'match_cancelled'
+                ? '配對已取消'
+                : '師傅已更新報價';
+            return (
+              <View key={quote.id} style={styles.historyRow}>
+                <View style={styles.historyMain}>
+                  <Text style={styles.historyName} numberOfLines={1}>{quote.workerName}</Text>
+                  <Text style={styles.historyMeta}>第 {quote.attemptNo} 次 · {historyStatus}</Text>
+                </View>
+                <Text style={styles.historyPrice}>HK${quote.price}</Text>
               </View>
-              <Text style={styles.historyPrice}>HK${quote.price}</Text>
-            </View>
-          ))}
+            );
+          })}
           <Text style={styles.historyFootnote}>歷史報價只供查看，不能再接受。</Text>
         </View>
       )}
