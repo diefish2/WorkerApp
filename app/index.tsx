@@ -1376,6 +1376,7 @@ const styles = StyleSheet.create({
   notSelectedLabel: { marginTop: 10, color: '#89968F', fontWeight: '700' },
   ratingText: { color: '#A87800', fontWeight: '900', fontSize: 12, marginTop: 3 },
   noRating: { color: '#8C9992', fontSize: 11, marginTop: 3 },
+  profileLink: { color: '#0B8D4A', fontSize: 12, fontWeight: '800', marginTop: 5 },
   historyList: { marginTop: 14, backgroundColor: '#F6F7F6', borderRadius: 12, borderWidth: 1, borderColor: '#E2E6E3', paddingHorizontal: 12, paddingVertical: 10 },
   historyListHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   historyListTitle: { color: '#56665E', fontWeight: '900', fontSize: 13 },
