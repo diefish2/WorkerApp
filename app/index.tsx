@@ -1185,40 +1185,20 @@ function CompletionModal({ job, visible, onClose, onSubmit }: {
   const [comment, setComment] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [pickingPhoto, setPickingPhoto] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setRating(5);
       setComment('');
       setPhotoUri(null);
-      setPickingPhoto(false);
     }
   }, [visible, job?.id]);
 
   async function pickPhoto() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('需要相簿權限', '請允許 WorkerApp 存取相片。');
-      return;
-    }
-
-    setPickingPhoto(true);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        quality: 0.8,
-      });
-      if (!result.canceled && result.assets.length > 0) {
-        setPhotoUri(result.assets[0].uri);
-      }
-    } catch (error: any) {
-      Alert.alert('開啟相簿失敗', error?.message ?? '請再試一次。');
-    } finally {
-      setPickingPhoto(false);
-    }
+    if (!permission.granted) return Alert.alert('需要相簿權限', '請允許 WorkerApp 存取相片。');
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+    if (!result.canceled && result.assets.length > 0) setPhotoUri(result.assets[0].uri);
   }
 
   async function submit() {
@@ -1230,7 +1210,7 @@ function CompletionModal({ job, visible, onClose, onSubmit }: {
   }
 
   return (
-    <Modal visible={visible && !pickingPhoto} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalBackdrop}><View style={styles.modalCard}>
         <Text style={styles.modalTitle}>完成工作及評分</Text>
         <Text style={styles.modalJob}>{job?.acceptedWorkerName} · {job?.title}</Text>
