@@ -120,6 +120,7 @@ export default function RootLayout() {
         <Stack.Protected guard={!!session}>
           <Stack.Screen name="index" />
           <Stack.Screen name="account" />
+          <Stack.Screen name="worker-profile" />
           <Stack.Screen name="notifications" />
           <Stack.Screen name="chats" />
           <Stack.Screen name="chat" />
