@@ -1,0 +1,55 @@
+name: Add worker profile link
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/add-worker-profile-link.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Patch customer quote card
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/index.tsx')
+          s = p.read_text()
+          if "import { router } from 'expo-router';" not in s:
+              s = s.replace("import { StatusBar } from 'expo-status-bar';", "import { router } from 'expo-router';\nimport { StatusBar } from 'expo-status-bar';")
+
+          old = """              <View>\n                <Text style={styles.workerName}>{quote.workerName}</Text>\n                <RatingText reviews={reviews} workerId={quote.workerId} />\n              </View>"""
+          new = """              <Pressable\n                onPress={() => quote.workerId && router.push({ pathname: '/worker-profile', params: { workerId: quote.workerId, name: quote.workerName } })}\n                disabled={!quote.workerId}\n              >\n                <Text style={styles.workerName}>{quote.workerName}</Text>\n                <RatingText reviews={reviews} workerId={quote.workerId} />\n                {quote.workerId ? <Text style={styles.profileLink}>查看師傅 Profile ›</Text> : null}\n              </Pressable>"""
+          if old not in s and '查看師傅 Profile ›' not in s:
+              raise SystemExit('quote card target not found')
+          s = s.replace(old, new)
+
+          style_old = "  noRating: { color: '#8C9992', fontSize: 11, marginTop: 3 },"
+          style_new = style_old + "\n  profileLink: { color: '#0B8D4A', fontSize: 12, fontWeight: '800', marginTop: 5 },"
+          if 'profileLink:' not in s:
+              if style_old not in s:
+                  raise SystemExit('style target not found')
+              s = s.replace(style_old, style_new)
+
+          p.write_text(s)
+          PY
+      - name: Commit changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/index.tsx
+          git commit -m "Make worker profile clickable from quotes"
+          git push
