@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -11,14 +13,28 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as ImagePicker from 'expo-image-picker';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../src/lib/supabase';
+
+const AVATAR_BUCKET = 'avatars';
+
+function avatarFileInfo(uri: string) {
+  const cleanUri = uri.split('?')[0].toLowerCase();
+  if (cleanUri.endsWith('.png')) return { ext: 'png', contentType: 'image/png' };
+  if (cleanUri.endsWith('.webp')) return { ext: 'webp', contentType: 'image/webp' };
+  if (cleanUri.endsWith('.heic')) return { ext: 'heic', contentType: 'image/heic' };
+  if (cleanUri.endsWith('.heif')) return { ext: 'heif', contentType: 'image/heif' };
+  return { ext: 'jpg', contentType: 'image/jpeg' };
+}
 
 export default function AccountScreen() {
   const [user, setUser] = useState<User | null>(null);
   const [displayName, setDisplayName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingName, setSavingName] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
@@ -34,11 +50,14 @@ export default function AccountScreen() {
       if (currentUser?.id) {
         const { data: profile } = await supabase
           .from('profiles')
-          .select('display_name')
+          .select('display_name, avatar_url')
           .eq('id', currentUser.id)
           .maybeSingle();
 
-        if (active) setDisplayName(profile?.display_name ?? '');
+        if (active) {
+          setDisplayName(profile?.display_name ?? '');
+          setAvatarUrl(profile?.avatar_url ?? null);
+        }
       }
 
       if (active) setLoading(false);
@@ -88,6 +107,66 @@ export default function AccountScreen() {
     Alert.alert('已儲存', '之後提交報價會自動使用呢個名稱。');
   }
 
+  async function pickAndUploadAvatar() {
+    if (!user?.id || uploadingAvatar) return;
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('需要相簿權限', '請允許 WorkerApp 存取相片。');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (result.canceled || result.assets.length === 0) return;
+
+    setUploadingAvatar(true);
+
+    try {
+      const uri = result.assets[0].uri;
+      const { ext, contentType } = avatarFileInfo(uri);
+      const bytes = await fetch(uri).then((response) => response.arrayBuffer());
+      const path = `${user.id}/${Date.now()}.${ext}`;
+
+      const { data: uploaded, error: uploadError } = await supabase.storage
+        .from(AVATAR_BUCKET)
+        .upload(path, bytes, {
+          contentType,
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const publicUrl = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(uploaded.path).data.publicUrl;
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert(
+          {
+            id: user.id,
+            display_name: displayName.trim() || null,
+            avatar_url: publicUrl,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+
+      if (profileError) throw profileError;
+
+      setAvatarUrl(publicUrl);
+      Alert.alert('頭像已更新', 'Customer 查看你嘅師傅 Profile 時會見到呢張相。');
+    } catch (error: any) {
+      Alert.alert('頭像上載失敗', error?.message ?? '請再試一次。');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
   async function signOut() {
     setSigningOut(true);
     const { error } = await supabase.auth.signOut({ scope: 'local' });
@@ -130,7 +209,7 @@ export default function AccountScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content}>
         <Pressable onPress={() => router.back()}>
           <Text style={styles.back}>‹ 返回</Text>
         </Pressable>
@@ -138,6 +217,25 @@ export default function AccountScreen() {
         <Text style={styles.title}>帳戶</Text>
 
         <View style={styles.card}>
+          <Text style={styles.label}>師傅頭像</Text>
+          <Text style={styles.helperText}>Customer 睇你嘅 Profile 時會見到呢張相。</Text>
+          <View style={styles.avatarSection}>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+            ) : (
+              <View style={styles.avatarPlaceholder}><Text style={styles.avatarPlaceholderText}>👷</Text></View>
+            )}
+            <Pressable
+              style={[styles.avatarButton, uploadingAvatar && styles.disabled]}
+              onPress={pickAndUploadAvatar}
+              disabled={uploadingAvatar}
+            >
+              <Text style={styles.avatarButtonText}>{uploadingAvatar ? '上載中...' : avatarUrl ? '更換頭像' : '上載頭像'}</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.divider} />
+
           <Text style={styles.label}>預設師傅名稱</Text>
           <Text style={styles.helperText}>設定一次，之後每次報價會自動帶出。</Text>
           <TextInput
@@ -192,20 +290,26 @@ export default function AccountScreen() {
         <Text style={styles.note}>
           開發測試帳戶登出後無法再取回同一個 anonymous account；重新測試登入會建立另一個 User ID。
         </Text>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F7FAF8' },
-  content: { flex: 1, padding: 20 },
+  content: { padding: 20, paddingBottom: 50 },
   back: { color: '#0B8D4A', fontSize: 16, fontWeight: '800', marginTop: 6 },
   title: { fontSize: 30, fontWeight: '900', color: '#17251E', marginTop: 18, marginBottom: 20 },
   card: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 18, borderWidth: 1, borderColor: '#E1E9E4' },
   label: { fontSize: 13, color: '#718178', fontWeight: '700', marginBottom: 5 },
   helperText: { fontSize: 12, color: '#7A8981', marginBottom: 10, marginTop: 6 },
   value: { fontSize: 17, color: '#21362B', fontWeight: '800' },
+  avatarSection: { alignItems: 'center', marginTop: 6 },
+  avatarImage: { width: 104, height: 104, borderRadius: 52 },
+  avatarPlaceholder: { width: 104, height: 104, borderRadius: 52, backgroundColor: '#EAF8F0', alignItems: 'center', justifyContent: 'center' },
+  avatarPlaceholderText: { fontSize: 46 },
+  avatarButton: { marginTop: 12, backgroundColor: '#EDF7F1', borderWidth: 1, borderColor: '#B9D8C6', borderRadius: 11, paddingVertical: 10, paddingHorizontal: 22 },
+  avatarButtonText: { color: '#0B7A45', fontSize: 14, fontWeight: '900' },
   input: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE5DF', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: '#21362B' },
   saveButton: { marginTop: 10, backgroundColor: '#0FA958', borderRadius: 11, paddingVertical: 12, alignItems: 'center' },
   saveButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
