@@ -12,6 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { categories } from '../src/data/mockData';
@@ -232,6 +233,11 @@ function RatingText({ reviews, workerId }: { reviews: WorkerReview[]; workerId: 
   const summary = ratingSummary(reviews, workerId);
   if (summary.count === 0) return <Text style={styles.noRating}>暫未有評分</Text>;
   return <Text style={styles.ratingText}>★ {summary.average.toFixed(1)} ({summary.count})</Text>;
+}
+
+function openWorkerProfile(workerId: string | null | undefined, workerName: string) {
+  if (!workerId) return;
+  router.push({ pathname: '/worker-profile', params: { workerId, name: workerName } });
 }
 
 export default function HomeScreen() {
@@ -865,6 +871,7 @@ function CustomerJobCard({ job, quotes, reviews, jobReview, onEdit, onDelete, on
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const matched = !!job.acceptedQuoteId;
   const completed = !!job.completedAt;
+  const acceptedQuote = job.acceptedQuoteId ? quotes.find((quote) => quote.id === job.acceptedQuoteId) ?? null : null;
   const activeQuotes = quotes.filter((quote) => quote.isActive);
   const historyQuotes = quotes.filter((quote) => !quote.isActive).sort((a, b) => b.attemptNo - a.attemptNo);
 
@@ -884,10 +891,15 @@ function CustomerJobCard({ job, quotes, reviews, jobReview, onEdit, onDelete, on
         <View style={[styles.matchedCard, completed && styles.completedCard]}>
           <Text style={styles.matchedTitle}>{completed ? '✓ 工作已完成' : '✓ 已配對師傅'}</Text>
           <View style={styles.rowBetween}>
-            <View style={{ flex: 1 }}>
+            <Pressable
+              style={styles.workerProfileLink}
+              disabled={!acceptedQuote?.workerId}
+              onPress={() => openWorkerProfile(acceptedQuote?.workerId, job.acceptedWorkerName ?? acceptedQuote?.workerName ?? '師傅')}
+            >
               <Text style={styles.matchedWorker}>{job.acceptedWorkerName}</Text>
-              <RatingText reviews={reviews} workerId={quotes.find((quote) => quote.id === job.acceptedQuoteId)?.workerId} />
-            </View>
+              <RatingText reviews={reviews} workerId={acceptedQuote?.workerId} />
+              {acceptedQuote?.workerId ? <Text style={styles.viewProfileText}>查看師傅 Profile ›</Text> : null}
+            </Pressable>
             <Text style={styles.matchedPrice}>HK${job.acceptedPrice}</Text>
           </View>
           {completed ? (
@@ -921,10 +933,15 @@ function CustomerJobCard({ job, quotes, reviews, jobReview, onEdit, onDelete, on
         return (
           <View key={quote.id} style={[styles.quoteCard, selected && styles.selectedQuoteCard]}>
             <View style={styles.rowBetween}>
-              <View>
+              <Pressable
+                style={styles.workerProfileLink}
+                disabled={!quote.workerId}
+                onPress={() => openWorkerProfile(quote.workerId, quote.workerName)}
+              >
                 <Text style={styles.workerName}>{quote.workerName}</Text>
                 <RatingText reviews={reviews} workerId={quote.workerId} />
-              </View>
+                {quote.workerId ? <Text style={styles.viewProfileText}>查看師傅 Profile ›</Text> : null}
+              </Pressable>
               <Text style={styles.quotePrice}>HK${quote.price}</Text>
             </View>
             <Text style={styles.quoteAttempt}>第 {quote.attemptNo} 次報價</Text>
@@ -1344,7 +1361,9 @@ const styles = StyleSheet.create({
   noQuotes: { marginTop: 10, color: '#7A8B82' },
   quoteCard: { marginTop: 10, backgroundColor: '#F7FAF8', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E1E9E4' },
   selectedQuoteCard: { borderColor: '#7AC79A', backgroundColor: '#F1FBF5' },
+  workerProfileLink: { flex: 1, paddingRight: 10 },
   workerName: { fontSize: 16, fontWeight: '800', color: '#22362C' },
+  viewProfileText: { color: '#0B8D4A', fontSize: 11, fontWeight: '800', marginTop: 4 },
   quotePrice: { fontSize: 18, fontWeight: '900', color: '#0B7A45' },
   quoteAttempt: { marginTop: 6, color: '#0B7A45', fontSize: 12, fontWeight: '800' },
   quoteMessage: { marginTop: 8, marginBottom: 6, color: '#455A50', lineHeight: 20 },
