@@ -31,10 +31,17 @@ type CompletedJob = {
   completed_at: string | null;
 };
 
+type PublicWorkerProfile = {
+  id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+};
+
 export default function WorkerProfileScreen() {
   const params = useLocalSearchParams<{ workerId?: string; name?: string }>();
   const [workerId, setWorkerId] = useState<string | null>(params.workerId ?? null);
   const [displayName, setDisplayName] = useState(params.name ?? '師傅');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [reviews, setReviews] = useState<WorkerReview[]>([]);
   const [jobs, setJobs] = useState<CompletedJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,15 +57,6 @@ export default function WorkerProfileScreen() {
         id = userData.user?.id ?? null;
         if (!active) return;
         setWorkerId(id);
-
-        if (id) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('display_name')
-            .eq('id', id)
-            .maybeSingle();
-          if (active && profile?.display_name) setDisplayName(profile.display_name);
-        }
       }
 
       if (!id) {
@@ -66,13 +64,26 @@ export default function WorkerProfileScreen() {
         return;
       }
 
-      const { data: reviewRows } = await supabase
-        .from('worker_reviews')
-        .select('id, job_id, worker_id, rating, comment, photo_url, created_at')
-        .eq('worker_id', id)
-        .order('created_at', { ascending: false });
+      const [profileResult, reviewResult] = await Promise.all([
+        supabase
+          .from('worker_public_profiles')
+          .select('id, display_name, avatar_url')
+          .eq('id', id)
+          .maybeSingle(),
+        supabase
+          .from('worker_reviews')
+          .select('id, job_id, worker_id, rating, comment, photo_url, created_at')
+          .eq('worker_id', id)
+          .order('created_at', { ascending: false }),
+      ]);
 
-      const rows = (reviewRows as WorkerReview[] | null) ?? [];
+      if (!active) return;
+
+      const publicProfile = profileResult.data as PublicWorkerProfile | null;
+      if (publicProfile?.display_name) setDisplayName(publicProfile.display_name);
+      setAvatarUrl(publicProfile?.avatar_url ?? null);
+
+      const rows = (reviewResult.data as WorkerReview[] | null) ?? [];
       const jobIds = rows.map((review) => review.job_id);
 
       let completedJobs: CompletedJob[] = [];
@@ -121,7 +132,11 @@ export default function WorkerProfileScreen() {
         </Pressable>
 
         <View style={styles.heroCard}>
-          <View style={styles.avatar}><Text style={styles.avatarText}>👷</Text></View>
+          {avatarUrl ? (
+            <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.avatar}><Text style={styles.avatarText}>👷</Text></View>
+          )}
           <Text style={styles.name}>{displayName}</Text>
           {workerId ? <Text style={styles.verified}>✓ WorkerApp 師傅</Text> : null}
           <Text style={styles.rating}>{reviews.length > 0 ? `★ ${average.toFixed(1)}` : '暫未有評分'}</Text>
@@ -164,8 +179,9 @@ const styles = StyleSheet.create({
   loadingBox: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText: { marginTop: 12, color: '#617168' },
   heroCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 22, alignItems: 'center', borderWidth: 1, borderColor: '#E1E9E4' },
-  avatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#EAF8F0', alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 34 },
+  avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: '#EAF8F0', alignItems: 'center', justifyContent: 'center' },
+  avatarImage: { width: 88, height: 88, borderRadius: 44 },
+  avatarText: { fontSize: 40 },
   name: { marginTop: 12, fontSize: 24, fontWeight: '900', color: '#17251E' },
   verified: { marginTop: 4, color: '#0B8D4A', fontWeight: '800', fontSize: 12 },
   rating: { marginTop: 12, fontSize: 22, fontWeight: '900', color: '#A87800' },
