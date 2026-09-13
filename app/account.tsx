@@ -105,6 +105,17 @@ export default function AccountScreen() {
     ]);
   }
 
+  function openWorkerProfile() {
+    if (!user?.id) return;
+    router.push({
+      pathname: '/worker-profile',
+      params: {
+        workerId: user.id,
+        name: displayName.trim() || '師傅',
+      },
+    });
+  }
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -143,6 +154,11 @@ export default function AccountScreen() {
           >
             <Text style={styles.saveButtonText}>{savingName ? '儲存中...' : '儲存名稱'}</Text>
           </Pressable>
+
+          <Pressable style={styles.profileButton} onPress={openWorkerProfile}>
+            <Text style={styles.profileButtonText}>★ 查看我的師傅 Profile</Text>
+          </Pressable>
+          <Text style={styles.helperText}>客戶評分、評語同完成相片會保留喺 Profile。</Text>
 
           <View style={styles.divider} />
 
@@ -188,11 +204,13 @@ const styles = StyleSheet.create({
   title: { fontSize: 30, fontWeight: '900', color: '#17251E', marginTop: 18, marginBottom: 20 },
   card: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 18, borderWidth: 1, borderColor: '#E1E9E4' },
   label: { fontSize: 13, color: '#718178', fontWeight: '700', marginBottom: 5 },
-  helperText: { fontSize: 12, color: '#7A8981', marginBottom: 10 },
+  helperText: { fontSize: 12, color: '#7A8981', marginBottom: 10, marginTop: 6 },
   value: { fontSize: 17, color: '#21362B', fontWeight: '800' },
   input: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE5DF', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: '#21362B' },
   saveButton: { marginTop: 10, backgroundColor: '#0FA958', borderRadius: 11, paddingVertical: 12, alignItems: 'center' },
   saveButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
+  profileButton: { marginTop: 12, backgroundColor: '#FFF8E1', borderWidth: 1, borderColor: '#E7CD7A', borderRadius: 11, paddingVertical: 12, alignItems: 'center' },
+  profileButtonText: { color: '#8A6700', fontSize: 15, fontWeight: '900' },
   userId: { fontSize: 12, lineHeight: 18, color: '#617168' },
   divider: { height: 1, backgroundColor: '#E8EEE9', marginVertical: 15 },
   logoutButton: { marginTop: 22, backgroundColor: '#FFF2F2', borderWidth: 1, borderColor: '#F0B9B9', borderRadius: 13, paddingVertical: 14, alignItems: 'center' },
