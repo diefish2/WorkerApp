@@ -121,6 +121,7 @@ export default function RootLayout() {
           <Stack.Screen name="index" />
           <Stack.Screen name="account" />
           <Stack.Screen name="worker-profile" />
+          <Stack.Screen name="completion-review" />
           <Stack.Screen name="notifications" />
           <Stack.Screen name="chats" />
           <Stack.Screen name="chat" />
