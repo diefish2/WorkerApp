@@ -251,7 +251,6 @@ export default function HomeScreen() {
   const [presetCategory, setPresetCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [quoteJob, setQuoteJob] = useState<JobPost | null>(null);
-  const [completionJob, setCompletionJob] = useState<JobPost | null>(null);
 
   const myJobs = currentUserId ? jobs.filter((job) => job.customerId === currentUserId) : [];
   const editingJob = myJobs.find((job) => job.id === editingJobId) ?? null;
@@ -576,30 +575,12 @@ export default function HomeScreen() {
     Alert.alert('配對已取消', '舊報價已保留為歷史，工作已重新開放報價。');
   }
 
-  async function completeJob(job: JobPost, rating: number, comment: string, photoUri: string | null) {
-    if (!job.acceptedQuoteId || job.completedAt) return false;
-    let photoUrl: string | null = null;
-    try {
-      photoUrl = await resolvePhotoUrl(photoUri, 'completion');
-    } catch (error: any) {
-      Alert.alert('完成相片上載失敗', error?.message ?? '請再試一次。');
-      return false;
-    }
-
-    const { error } = await supabase.rpc('complete_job_and_review', {
-      p_job_id: job.id,
-      p_rating: rating,
-      p_comment: comment.trim(),
-      p_photo_url: photoUrl,
+  function openCompletionReview(job: JobPost) {
+    if (!job.acceptedQuoteId || job.completedAt) return;
+    router.push({
+      pathname: '/completion-review',
+      params: { jobId: job.id },
     });
-    if (error) {
-      Alert.alert('提交失敗', error.message);
-      return false;
-    }
-
-    await Promise.all([loadJobs(), loadReviews()]);
-    Alert.alert('工作已完成', `你已經畀 ${job.acceptedWorkerName ?? '師傅'} ${rating} 星評分。`);
-    return true;
   }
 
   return (
@@ -657,7 +638,7 @@ export default function HomeScreen() {
                 onAcceptQuote={confirmAcceptQuote}
                 onDeclineQuote={confirmDeclineQuote}
                 onCancelMatch={confirmCancelMatch}
-                onCompleteJob={setCompletionJob}
+                onCompleteJob={openCompletionReview}
               />
             )}
             {mode === 'worker' && (
@@ -683,12 +664,6 @@ export default function HomeScreen() {
         onSubmit={submitQuote}
       />
 
-      <CompletionModal
-        job={completionJob}
-        visible={!!completionJob}
-        onClose={() => setCompletionJob(null)}
-        onSubmit={completeJob}
-      />
     </SafeAreaView>
   );
 }
@@ -1192,77 +1167,6 @@ function QuoteModal({ job, quotes, currentUserId, visible, onClose, onSubmit }: 
   );
 }
 
-function CompletionModal({ job, visible, onClose, onSubmit }: {
-  job: JobPost | null;
-  visible: boolean;
-  onClose: () => void;
-  onSubmit: (job: JobPost, rating: number, comment: string, photoUri: string | null) => Promise<boolean>;
-}) {
-  const [rating, setRating] = useState(5);
-  const [comment, setComment] = useState('');
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (visible) {
-      setRating(5);
-      setComment('');
-      setPhotoUri(null);
-    }
-  }, [visible, job?.id]);
-
-  async function pickPhoto() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return Alert.alert('需要相簿權限', '請允許 WorkerApp 存取相片。');
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
-    if (!result.canceled && result.assets.length > 0) setPhotoUri(result.assets[0].uri);
-  }
-
-  async function submit() {
-    if (!job) return;
-    setSubmitting(true);
-    const ok = await onSubmit(job, rating, comment, photoUri);
-    setSubmitting(false);
-    if (ok) onClose();
-  }
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalBackdrop}><View style={styles.modalCard}>
-        <Text style={styles.modalTitle}>完成工作及評分</Text>
-        <Text style={styles.modalJob}>{job?.acceptedWorkerName} · {job?.title}</Text>
-        <Text style={styles.label}>你會畀師傅幾多星？</Text>
-        <View style={styles.starRow}>
-          {[1, 2, 3, 4, 5].map((star) => (
-            <Pressable key={star} onPress={() => setRating(star)}><Text style={[styles.starButton, star <= rating && styles.starButtonActive]}>★</Text></Pressable>
-          ))}
-        </View>
-        <Text style={styles.ratingChoice}>{rating} / 5 星</Text>
-        <Text style={styles.label}>完成相片（可選）</Text>
-        {photoUri ? (
-          <View style={styles.photoPreviewCard}>
-            <Image source={{ uri: photoUri }} style={styles.completionPreview} />
-            <View style={styles.photoActions}>
-              <Pressable style={styles.secondaryButton} onPress={pickPhoto}><Text style={styles.secondaryText}>更換相片</Text></Pressable>
-              <Pressable style={styles.removeButton} onPress={() => setPhotoUri(null)}><Text style={styles.removeText}>移除</Text></Pressable>
-            </View>
-          </View>
-        ) : (
-          <Pressable style={styles.photoBoxSmall} onPress={pickPhoto}><Text style={styles.photoPlus}>＋</Text><Text style={styles.photoText}>加入完成相片</Text></Pressable>
-        )}
-        <Text style={styles.label}>評語（可選）</Text>
-        <TextInput value={comment} onChangeText={setComment} placeholder="例如：準時、手工好、解釋清楚。" multiline style={[styles.input, styles.textAreaSmall]} />
-        <Text style={styles.completionHint}>提交後工作會標記為「已完成」，評分會計入師傅公開星級，而且不能再取消配對。</Text>
-        <View style={styles.modalActions}>
-          <Pressable style={styles.secondaryButton} onPress={onClose}><Text style={styles.secondaryText}>返回</Text></Pressable>
-          <Pressable style={[styles.acceptButton, submitting && styles.disabledButton]} onPress={submit} disabled={submitting}>
-            <Text style={styles.primaryButtonText}>{submitting ? '提交中...' : '確認完成'}</Text>
-          </Pressable>
-        </View>
-      </View></View>
-    </Modal>
-  );
-}
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F7FAF8' },
