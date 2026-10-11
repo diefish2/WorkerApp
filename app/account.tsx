@@ -265,10 +265,13 @@ export default function AccountScreen() {
 
           <View style={styles.divider} />
 
+          <Text style={styles.label}>Email</Text>
+          <Text style={styles.value}>{user?.email ?? '未設定'}</Text>
+
+          <View style={styles.divider} />
+
           <Text style={styles.label}>帳戶類型</Text>
-          <Text style={styles.value}>
-            {user?.is_anonymous ? '開發測試帳戶' : 'WorkerApp 帳戶'}
-          </Text>
+          <Text style={styles.value}>WorkerApp Email 帳戶</Text>
 
           {user?.id ? (
             <>
@@ -288,7 +291,7 @@ export default function AccountScreen() {
         </Pressable>
 
         <Text style={styles.note}>
-          開發測試帳戶登出後無法再取回同一個 anonymous account；重新測試登入會建立另一個 User ID。
+          登出後可以使用同一個 Email 同密碼再次登入，帳戶資料、報價、評分同聊天紀錄會跟返同一個 User ID。
         </Text>
       </ScrollView>
     </SafeAreaView>
