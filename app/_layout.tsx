@@ -22,10 +22,6 @@ export default function RootLayout() {
     let mounted = true;
 
     async function initializeAuth() {
-      if (__DEV__) {
-        await supabase.auth.signOut({ scope: 'local' });
-      }
-
       const { data } = await supabase.auth.getSession();
       if (!mounted) return;
       setSession(data.session);
