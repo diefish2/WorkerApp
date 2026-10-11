@@ -169,6 +169,11 @@ export default function AccountScreen() {
 
   async function signOut() {
     setSigningOut(true);
+
+    if (user?.id) {
+      await supabase.from('push_tokens').delete().eq('user_id', user.id);
+    }
+
     const { error } = await supabase.auth.signOut({ scope: 'local' });
 
     if (error) {
