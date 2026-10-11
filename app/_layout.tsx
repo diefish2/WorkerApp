@@ -8,8 +8,10 @@ import {
   View,
 } from 'react-native';
 import { Stack, router, usePathname } from 'expo-router';
+import * as Notifications from 'expo-notifications';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../src/lib/supabase';
+import { registerForRemotePush } from '../src/lib/pushNotifications';
 
 export default function RootLayout() {
   const pathname = usePathname();
@@ -98,6 +100,34 @@ export default function RootLayout() {
       supabase.removeChannel(channel);
     };
   }, [session?.user.id, pathname]);
+
+  useEffect(() => {
+    if (!session?.user.id) return;
+
+    registerForRemotePush(session.user.id).catch((error) => {
+      console.warn('Push registration failed:', error);
+    });
+  }, [session?.user.id]);
+
+  useEffect(() => {
+    function openFromNotification(notification: Notifications.Notification) {
+      const url = notification.request.content.data?.url;
+      if (typeof url === 'string' && url.startsWith('/')) {
+        router.push(url as never);
+      }
+    }
+
+    const initialResponse = Notifications.getLastNotificationResponse();
+    if (initialResponse?.notification) {
+      openFromNotification(initialResponse.notification);
+    }
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      openFromNotification(response.notification);
+    });
+
+    return () => subscription.remove();
+  }, []);
 
   if (checkingAuth) {
     return (
