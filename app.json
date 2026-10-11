@@ -20,7 +20,9 @@
         {
           "photosPermission": "WorkerApp 需要存取相片，讓你上載維修問題的圖片。"
         }
-      ]
+      ],
+      "expo-notifications",
+      "expo-dev-client"
     ]
   }
 }
