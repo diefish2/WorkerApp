@@ -19,6 +19,7 @@ type Step = 'phone' | 'otp';
 
 const DEV_PHONE = '91234567';
 const DEV_OTP = '123456';
+const WAIVER_VERSION = '2026-10-10-v1';
 
 export default function LoginScreen() {
   const [step, setStep] = useState<Step>('phone');
@@ -26,6 +27,7 @@ export default function LoginScreen() {
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [waiverAccepted, setWaiverAccepted] = useState(false);
 
   const fullPhone = `+852${phone}`;
 
@@ -49,6 +51,8 @@ export default function LoginScreen() {
       {
         id: userId,
         phone: phoneValue,
+        waiver_accepted_at: new Date().toISOString(),
+        waiver_version: WAIVER_VERSION,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'id' }
@@ -81,6 +85,10 @@ export default function LoginScreen() {
   }
 
   function startDevOtp() {
+    if (!waiverAccepted) {
+      Alert.alert('請先同意免責聲明', '建立或使用 WorkerApp 帳戶前，請先閱讀並同意《免責聲明及使用條款》。');
+      return;
+    }
     setPhone(DEV_PHONE);
     setOtp('');
     setStep('otp');
@@ -96,6 +104,10 @@ export default function LoginScreen() {
   }
 
   async function sendOtp() {
+    if (!waiverAccepted) {
+      Alert.alert('請先同意免責聲明', '建立或使用 WorkerApp 帳戶前，請先閱讀並同意《免責聲明及使用條款》。');
+      return;
+    }
     if (phone.length !== 8) {
       Alert.alert('電話號碼格式唔正確', '請輸入 8 位香港電話號碼。');
       return;
@@ -197,7 +209,27 @@ export default function LoginScreen() {
                   autoFocus
                 />
               </View>
-              <Pressable style={[styles.primaryButton, submitting && styles.disabled]} onPress={sendOtp} disabled={submitting}>
+              <View style={styles.waiverBox}>
+                <Pressable
+                  style={[styles.checkbox, waiverAccepted && styles.checkboxChecked]}
+                  onPress={() => setWaiverAccepted((value) => !value)}
+                  disabled={submitting}
+                >
+                  <Text style={styles.checkboxMark}>{waiverAccepted ? '✓' : ''}</Text>
+                </Pressable>
+                <Text style={styles.waiverText}>
+                  我已閱讀並同意
+                  <Text style={styles.waiverLink} onPress={() => router.push('/waiver')}>
+                    《免責聲明及使用條款》
+                  </Text>
+                </Text>
+              </View>
+
+              <Pressable
+                style={[styles.primaryButton, (!waiverAccepted || submitting) && styles.disabled]}
+                onPress={sendOtp}
+                disabled={!waiverAccepted || submitting}
+              >
                 <Text style={styles.primaryText}>{submitting ? '發送中...' : '取得驗證碼'}</Text>
               </Pressable>
 
@@ -258,6 +290,12 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: '#0FA958', borderRadius: 13, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
   primaryText: { color: '#FFFFFF', fontWeight: '900', fontSize: 16 },
   disabled: { opacity: 0.55 },
+  waiverBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 14 },
+  checkbox: { width: 22, height: 22, borderRadius: 5, borderWidth: 1.5, borderColor: '#9DB5A8', alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  checkboxChecked: { backgroundColor: '#0FA958', borderColor: '#0FA958' },
+  checkboxMark: { color: '#FFFFFF', fontWeight: '900', fontSize: 14 },
+  waiverText: { flex: 1, color: '#60776D', fontSize: 13, lineHeight: 20 },
+  waiverLink: { color: '#0B8D4A', fontWeight: '900' },
   linkRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 },
   linkText: { color: '#0B8D4A', fontWeight: '800' },
   divider: { height: 1, backgroundColor: '#E8EEE9', marginVertical: 22 },
