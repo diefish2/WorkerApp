@@ -15,19 +15,15 @@ import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../src/lib/supabase';
 
-type Step = 'phone' | 'otp';
-
-const DEV_PHONE = '91234567';
-const DEV_OTP = '123456';
+type AuthMode = 'signin' | 'signup';
 
 export default function LoginScreen() {
-  const [step, setStep] = useState<Step>('phone');
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
+  const [mode, setMode] = useState<AuthMode>('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
-  const fullPhone = `+852${phone}`;
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -36,121 +32,113 @@ export default function LoginScreen() {
     });
   }, []);
 
-  function updatePhone(value: string) {
-    setPhone(value.replace(/\D/g, '').slice(0, 8));
+  function cleanEmail(value: string) {
+    setEmail(value.trim().toLowerCase());
   }
 
-  function updateOtp(value: string) {
-    setOtp(value.replace(/\D/g, '').slice(0, 6));
-  }
-
-  async function createProfile(userId: string, phoneValue: string | null) {
+  async function createProfile(userId: string) {
     return supabase.from('profiles').upsert(
       {
         id: userId,
-        phone: phoneValue,
+        phone: null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'id' }
     );
   }
 
-  async function devLogin() {
-    setSubmitting(true);
+  async function signIn() {
+    const normalizedEmail = email.trim().toLowerCase();
 
-    const { data, error } = await supabase.auth.signInAnonymously();
-
-    if (error || !data.user) {
-      setSubmitting(false);
-      Alert.alert(
-        '開發登入未啟用',
-        '請到 Supabase Dashboard → Authentication → Providers → Anonymous Sign-Ins，將 Anonymous Sign-Ins 開啟。之後返嚟再撳一次。'
-      );
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      Alert.alert('請輸入有效 Email');
       return;
     }
-
-    const { error: profileError } = await createProfile(data.user.id, null);
-    setSubmitting(false);
-
-    if (profileError) {
-      Alert.alert('測試帳戶建立失敗', profileError.message);
-      return;
-    }
-
-    router.replace('/');
-  }
-
-  function startDevOtp() {
-    setPhone(DEV_PHONE);
-    setOtp('');
-    setStep('otp');
-    Alert.alert('免費測試模式', `測試電話：+852 ${DEV_PHONE}\n驗證碼：${DEV_OTP}\n\n呢個模式唔會發 SMS。`);
-  }
-
-  async function verifyDevOtp() {
-    if (phone !== DEV_PHONE || otp !== DEV_OTP) {
-      Alert.alert('測試驗證碼錯誤', `開發測試請使用 ${DEV_OTP}。`);
-      return;
-    }
-    await devLogin();
-  }
-
-  async function sendOtp() {
-    if (phone.length !== 8) {
-      Alert.alert('電話號碼格式唔正確', '請輸入 8 位香港電話號碼。');
+    if (!password) {
+      Alert.alert('請輸入密碼');
       return;
     }
 
     setSubmitting(true);
-    const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
-    setSubmitting(false);
-
-    if (error) {
-      Alert.alert(
-        '未能發送驗證碼',
-        `${error.message}\n\n正式 Phone OTP 需要先設定 SMS provider。開發期間可以用下面嘅免費測試登入。`
-      );
-      return;
-    }
-
-    setOtp('');
-    setStep('otp');
-    Alert.alert('驗證碼已發送', `6 位驗證碼已發送到 ${fullPhone}。`);
-  }
-
-  async function verifyOtp() {
-    if (phone === DEV_PHONE) {
-      await verifyDevOtp();
-      return;
-    }
-
-    if (otp.length !== 6) {
-      Alert.alert('請輸入驗證碼', '驗證碼應該係 6 位數字。');
-      return;
-    }
-
-    setSubmitting(true);
-    const { data, error } = await supabase.auth.verifyOtp({
-      phone: fullPhone,
-      token: otp,
-      type: 'sms',
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
     });
 
     if (error || !data.user) {
       setSubmitting(false);
-      Alert.alert('驗證失敗', error?.message ?? '請重新輸入驗證碼。');
+      const notConfirmed = /email not confirmed/i.test(error?.message ?? '');
+      Alert.alert(
+        '登入失敗',
+        notConfirmed ? '請先到 Email 收件箱完成驗證，再返嚟登入。' : (error?.message ?? '請檢查 Email 同密碼。')
+      );
       return;
     }
 
-    const { error: profileError } = await createProfile(data.user.id, data.user.phone ?? fullPhone);
+    const { error: profileError } = await createProfile(data.user.id);
     setSubmitting(false);
 
     if (profileError) {
-      Alert.alert('帳戶建立失敗', profileError.message);
+      Alert.alert('帳戶資料建立失敗', profileError.message);
       return;
     }
 
     router.replace('/');
+  }
+
+  async function signUp() {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      Alert.alert('請輸入有效 Email');
+      return;
+    }
+    if (password.length < 8) {
+      Alert.alert('密碼太短', '密碼最少需要 8 個字元。');
+      return;
+    }
+    if (password !== confirmPassword) {
+      Alert.alert('密碼唔一致', '請再次確認兩次輸入嘅密碼相同。');
+      return;
+    }
+
+    setSubmitting(true);
+    const { data, error } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password,
+    });
+
+    if (error || !data.user) {
+      setSubmitting(false);
+      Alert.alert('建立帳戶失敗', error?.message ?? '請再試一次。');
+      return;
+    }
+
+    const { error: profileError } = await createProfile(data.user.id);
+    setSubmitting(false);
+
+    if (profileError) {
+      Alert.alert('帳戶資料建立失敗', profileError.message);
+      return;
+    }
+
+    if (data.session) {
+      router.replace('/');
+      return;
+    }
+
+    setPassword('');
+    setConfirmPassword('');
+    setMode('signin');
+    Alert.alert(
+      '請驗證 Email',
+      '帳戶已建立。請到 ' + normalizedEmail + ' 收件箱撳驗證連結，完成後返 WorkerApp 登入。'
+    );
+  }
+
+  async function submit() {
+    if (mode === 'signin') await signIn();
+    else await signUp();
   }
 
   if (loading) {
@@ -173,69 +161,86 @@ export default function LoginScreen() {
       >
         <View style={styles.card}>
           <Text style={styles.logo}>WorkerApp</Text>
-          <Text style={styles.title}>{step === 'phone' ? '電話號碼登入' : '輸入驗證碼'}</Text>
+
+          <View style={styles.modeRow}>
+            <Pressable
+              style={[styles.modeButton, mode === 'signin' && styles.modeButtonActive]}
+              onPress={() => setMode('signin')}
+              disabled={submitting}
+            >
+              <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>登入</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeButton, mode === 'signup' && styles.modeButtonActive]}
+              onPress={() => setMode('signup')}
+              disabled={submitting}
+            >
+              <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>建立帳戶</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.title}>{mode === 'signin' ? '歡迎返嚟' : '建立 WorkerApp 帳戶'}</Text>
           <Text style={styles.subtitle}>
-            {step === 'phone'
-              ? '正式版本會用香港電話 OTP；開發期間可以免費測試。'
-              : phone === DEV_PHONE
-                ? `免費測試帳戶 +852 ${DEV_PHONE}`
-                : `我哋已經將 6 位驗證碼發送到 ${fullPhone}`}
+            {mode === 'signin'
+              ? '使用 Email 同密碼登入。'
+              : 'Customer 同 Worker 都使用同一個 Email 帳戶；登入後可以隨時切換模式。'}
           </Text>
 
-          {step === 'phone' ? (
-            <>
-              <Text style={styles.label}>香港電話號碼</Text>
-              <View style={styles.phoneRow}>
-                <View style={styles.prefixBox}><Text style={styles.prefixText}>+852</Text></View>
-                <TextInput
-                  value={phone}
-                  onChangeText={updatePhone}
-                  keyboardType="number-pad"
-                  placeholder="91234567"
-                  maxLength={8}
-                  style={styles.phoneInput}
-                  autoFocus
-                />
-              </View>
-              <Pressable style={[styles.primaryButton, submitting && styles.disabled]} onPress={sendOtp} disabled={submitting}>
-                <Text style={styles.primaryText}>{submitting ? '發送中...' : '取得驗證碼'}</Text>
-              </Pressable>
+          <Text style={styles.label}>Email</Text>
+          <TextInput
+            value={email}
+            onChangeText={cleanEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="email"
+            textContentType="emailAddress"
+            placeholder="you@example.com"
+            style={styles.input}
+          />
 
-              <View style={styles.divider} />
-              <View style={styles.devBox}>
-                <Text style={styles.devTitle}>免費開發測試</Text>
-                <Text style={styles.devNote}>唔發 SMS、唔需要 Twilio。測試電話 91234567，OTP 123456。</Text>
-                <Pressable style={styles.devButton} onPress={startDevOtp} disabled={submitting}>
-                  <Text style={styles.devButtonText}>使用免費測試登入</Text>
-                </Pressable>
-              </View>
-            </>
-          ) : (
+          <Text style={styles.label}>密碼</Text>
+          <TextInput
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            autoCapitalize="none"
+            autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+            textContentType={mode === 'signin' ? 'password' : 'newPassword'}
+            placeholder={mode === 'signup' ? '最少 8 個字元' : '輸入密碼'}
+            style={styles.input}
+          />
+
+          {mode === 'signup' ? (
             <>
-              <Text style={styles.label}>6 位驗證碼</Text>
+              <Text style={styles.label}>再次輸入密碼</Text>
               <TextInput
-                value={otp}
-                onChangeText={updateOtp}
-                keyboardType="number-pad"
-                placeholder="123456"
-                maxLength={6}
-                style={styles.otpInput}
-                autoFocus
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                textContentType="newPassword"
+                placeholder="再次輸入密碼"
+                style={styles.input}
               />
-              {phone === DEV_PHONE && <Text style={styles.testHint}>測試 OTP：123456</Text>}
-              <Pressable style={[styles.primaryButton, submitting && styles.disabled]} onPress={verifyOtp} disabled={submitting}>
-                <Text style={styles.primaryText}>{submitting ? '登入中...' : '驗證並登入'}</Text>
-              </Pressable>
-              <View style={styles.linkRow}>
-                <Pressable onPress={() => { setStep('phone'); setOtp(''); }} disabled={submitting}>
-                  <Text style={styles.linkText}>更改電話號碼</Text>
-                </Pressable>
-                {phone !== DEV_PHONE && (
-                  <Pressable onPress={sendOtp} disabled={submitting}><Text style={styles.linkText}>重新發送</Text></Pressable>
-                )}
-              </View>
             </>
-          )}
+          ) : null}
+
+          <Pressable
+            style={[styles.primaryButton, submitting && styles.disabled]}
+            onPress={submit}
+            disabled={submitting}
+          >
+            <Text style={styles.primaryText}>
+              {submitting ? '處理中...' : mode === 'signin' ? '登入' : '建立帳戶'}
+            </Text>
+          </Pressable>
+
+          <Text style={styles.note}>
+            {mode === 'signup'
+              ? '正式版本建議保留 Email 驗證。建立帳戶後可能需要先到收件箱完成驗證。'
+              : '登入後 App 會保留 session，重新開 App 唔需要每次再登入。'}
+          </Text>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -246,27 +251,20 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F7FAF8' },
   keyboardView: { flex: 1, justifyContent: 'center', padding: 22 },
   card: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 22, borderWidth: 1, borderColor: '#E1E9E4' },
-  logo: { fontSize: 25, fontWeight: '900', color: '#0B7A45', marginBottom: 26 },
+  logo: { fontSize: 25, fontWeight: '900', color: '#0B7A45', marginBottom: 22 },
+  modeRow: { flexDirection: 'row', backgroundColor: '#EEF4F0', padding: 4, borderRadius: 13, marginBottom: 22 },
+  modeButton: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10 },
+  modeButtonActive: { backgroundColor: '#0FA958' },
+  modeText: { color: '#60746A', fontWeight: '900' },
+  modeTextActive: { color: '#FFFFFF' },
   title: { fontSize: 29, lineHeight: 35, fontWeight: '900', color: '#17251E' },
   subtitle: { fontSize: 15, lineHeight: 22, color: '#687A71', marginTop: 9, marginBottom: 20 },
-  label: { fontSize: 14, fontWeight: '800', color: '#32443B', marginBottom: 8 },
-  phoneRow: { flexDirection: 'row', gap: 9 },
-  prefixBox: { minWidth: 72, borderWidth: 1, borderColor: '#DCE5DF', borderRadius: 12, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F4F7F5' },
-  prefixText: { fontSize: 16, fontWeight: '800', color: '#40564B' },
-  phoneInput: { flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE5DF', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 14, fontSize: 18 },
-  otpInput: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE5DF', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 14, fontSize: 24, letterSpacing: 8, textAlign: 'center' },
-  primaryButton: { backgroundColor: '#0FA958', borderRadius: 13, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
+  label: { fontSize: 14, fontWeight: '800', color: '#32443B', marginBottom: 8, marginTop: 10 },
+  input: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE5DF', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 14, fontSize: 16 },
+  primaryButton: { backgroundColor: '#0FA958', borderRadius: 13, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
   primaryText: { color: '#FFFFFF', fontWeight: '900', fontSize: 16 },
+  note: { marginTop: 14, color: '#7A8981', fontSize: 12, lineHeight: 18 },
   disabled: { opacity: 0.55 },
-  linkRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 },
-  linkText: { color: '#0B8D4A', fontWeight: '800' },
-  divider: { height: 1, backgroundColor: '#E8EEE9', marginVertical: 22 },
-  devBox: { backgroundColor: '#F1FBF5', borderWidth: 1, borderColor: '#C8E8D4', borderRadius: 14, padding: 14 },
-  devTitle: { fontSize: 16, fontWeight: '900', color: '#0B7A45' },
-  devNote: { fontSize: 13, lineHeight: 19, color: '#60776D', marginTop: 5 },
-  devButton: { marginTop: 12, borderRadius: 11, paddingVertical: 12, alignItems: 'center', backgroundColor: '#E0F5E8' },
-  devButtonText: { color: '#0B7A45', fontWeight: '900' },
-  testHint: { marginTop: 8, color: '#0B7A45', fontWeight: '800', textAlign: 'center' },
   loadingBox: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText: { marginTop: 12, color: '#617168' },
 });
